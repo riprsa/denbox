@@ -30,8 +30,10 @@ fail() {
 trap 'fail "line $LINENO: $BASH_COMMAND"' ERR
 
 # as SCRIPT: runs a shell script as the box's user, in a login shell as a
-# person would.
-as() { sudo -u "$user" -i bash -euo pipefail -c "$1"; }
+# person would. The script goes on stdin: sudo -i passes a command through
+# the login shell with each special character escaped, which turns a
+# newline into a line continuation and so joins the lines of a script.
+as() { sudo -u "$user" -i bash -euo pipefail <<<"$1"; }
 # wait_for SECONDS SCRIPT: until SCRIPT succeeds as the box's user.
 wait_for() {
   local deadline=$((SECONDS + $1))
@@ -66,9 +68,8 @@ getent passwd "$user" > /dev/null || fail "no user $user"
 
 echo '# the unit is active and the first sync applies the box'
 systemctl is-active --quiet "$unit" || fail 'unit not active'
-# A first sync that fails ends the test at once; the fixture has no reason to.
-wait_for 1800 '! grep -q "failed exit=" ~/.local/state/denbox/status 2> /dev/null || exit 0
-  grep -q " applied " ~/.local/state/denbox/status'
+# Until the first sync ends either way; one that fails ends the test at once.
+wait_for 1800 'grep -qE " applied |failed exit=" ~/.local/state/denbox/status'
 as 'grep -q " applied " ~/.local/state/denbox/status' || fail 'the first sync failed'
 [[ $(as 'cat ~/worker-version') == 1 ]] || fail "version $(as 'cat ~/worker-version')"
 
