@@ -7,7 +7,9 @@ there is commented; the full list is in denbox's `docs/design.md`.
 
 - `flake.nix`: switch T3 Code and the agents on or off, add packages, set a
   secrets provider. Add another box as another attribute next to `main`.
-- `agent/AGENTS.md`: the instructions every agent reads.
+- `agent/AGENTS.md`: the instructions both agents read, linked into each
+  agent's own place by `home.file`. Give each agent a file of its own, or
+  add skills, the same way.
 
 ## Start
 

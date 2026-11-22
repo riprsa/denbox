@@ -98,6 +98,9 @@ configuration into the files the agent owns. It does not model an agent's
 configuration: both options above are free-form and take whatever keys that
 agent understands. Merging is per key, never per table, so a key the kit sets
 leaves its neighbours alone, and so does a key the user sets by hand.
+Codex splits a `-c` path at every dot and takes each part literally, so the
+keys of `denbox.agents.codex.config` are passed unquoted, and a key with `.`
+or `=` is refused.
 Instructions, skills and other files an agent reads are the environment's own
 `home.file` entries; the kit writes none of them.
 
