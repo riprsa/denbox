@@ -1,9 +1,9 @@
 # denbox-api, the box's state behind the browser panel, as the supervised
 # service denbox-api. It serves data only; the extension's code comes from Git.
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, kit, ... }:
 let
   cfg = config.denbox;
-  api = pkgs.callPackage ../packages/denbox-api.nix { };
+  api = kit.denbox-api;
 in
 {
   options.denbox.api = {
