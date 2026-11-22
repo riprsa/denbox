@@ -14,6 +14,7 @@ let
         tags = [ "tag:denbox" "tag:dev" ];
         ssh = true;
         acceptDns = false;
+        netfilterMode = "off";
         serve.t3 = { port = 443; to = "http://127.0.0.1:3773"; };
         serve.api = { port = 8443; path = "/api"; https = false; to = "http://127.0.0.1:48099"; };
       };
@@ -66,7 +67,7 @@ runCommand "denbox-tailscale-check" { } ''
   grep -qF -- 'exec ${tailscale}/bin/tailscaled --statedir="$state" --socket=/run/denbox/tailscale/tailscaled.sock' ${run on} \
     || fail "on: tailscaled not started with its state and socket"
   grep -q '/dev/net/tun' ${run on} || fail "on: no check for the tunnel"
-  has ${configure on} "flags=(--reset '--hostname=on' '--advertise-tags=tag:denbox,tag:dev' '--ssh=true' '--accept-dns=false' '--login-server=https://headscale.example.com')"
+  has ${configure on} "flags=(--reset '--hostname=on' '--advertise-tags=tag:denbox,tag:dev' '--ssh=true' '--accept-dns=false' '--login-server=https://headscale.example.com' '--netfilter-mode=off')"
   has ${configure on} 'key=/run/secrets/denbox_tailscale_authkey'
   # The served set is replaced, then each entry is served in name order.
   [[ $(grep -E '^(tailscale serve reset|serve )' ${configure on}) == "tailscale serve reset
