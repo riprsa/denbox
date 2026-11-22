@@ -11,8 +11,8 @@
 # terminal; the token only when the repository is not readable without one.
 # DENBOX_SYNC_INTERVAL goes into the bootstrap. NAME (default BOX) names the
 # unit denbox-NAME.service. SEED is the flake the first runtime is built
-# from, this repository at a pinned revision unless given (a local checkout
-# as path:DIR).
+# from, this repository's default branch unless given (a revision to pin
+# it, or a local checkout as path:DIR).
 #
 # The box names its user: the installer reads home.username and
 # home.homeDirectory of the box, creates that user when it is missing, and
@@ -26,8 +26,11 @@ umask 077
 # a temporary one. The files it writes name the paths without it.
 root=${DENBOX_HOST_ROOT:-}
 nix_version=2.34.1
-seed_default=github:riprsa/denbox/86f16e12e5a6f5ce6e58144d77f3a0965ce56e17
+# The seed runs only until the box's first activation installs the runtime
+# that the box's own lock names, so the latest one is good enough to start.
+seed_default=github:riprsa/denbox
 nix=/nix/var/nix/profiles/default/bin/nix
+nix_conf=/etc/nix/nix.conf
 seed_link=/nix/var/nix/gcroots/denbox-seed
 
 fail() { printf 'denbox install-host: %s\n' "$*" >&2; exit 1; }
@@ -178,6 +181,29 @@ else
   systemctl is-active --quiet nix-daemon.socket nix-daemon.service ||
     fail 'Nix is installed without its daemon; this installer needs multi-user Nix'
 fi
+# The runtime asks Nix for the kit's binary cache. Through the daemon Nix
+# takes a substituter and its key from a user only when the daemon trusts
+# them; these lines trust that one cache without turning it on for every
+# user of the machine.
+trust=(
+  'extra-trusted-substituters = https://denbox.cachix.org'
+  'extra-trusted-public-keys = denbox.cachix.org-1:0wTpaHGYAg3yirdzhxYjNPnzPjVjBiNoMHaK4Hptx9I='
+)
+trusted=true
+for line in "${trust[@]}"; do
+  grep -qxF "$line" "$root$nix_conf" 2> /dev/null || trusted=false
+done
+if [[ $trusted == false ]]; then
+  echo "Trusting the denbox binary cache in $nix_conf"
+  install -d -m 0755 "$root${nix_conf%/*}"
+  [[ -f $root$nix_conf ]] || install -m 0644 /dev/null "$root$nix_conf"
+  [[ -z $(tail -c 1 "$root$nix_conf") ]] || echo >> "$root$nix_conf"
+  for line in "${trust[@]}"; do
+    grep -qxF "$line" "$root$nix_conf" || printf '%s\n' "$line" >> "$root$nix_conf"
+  done
+  systemctl restart nix-daemon.service
+fi
+
 # Flakes for the installer's own calls, whatever nix.conf says.
 export NIX_CONFIG='extra-experimental-features = nix-command flakes'
 

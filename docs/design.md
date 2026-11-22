@@ -312,9 +312,14 @@ machine: its agents can do whatever that user can.
    as the image. Multi-user Nix lets a box that is not root build, root and
    collect the store through the daemon, with the sandbox on, and needs
    none of the container's settings (`sandbox = false`, no build users). A
-   Nix without its daemon is refused;
-2. builds the seed runtime from this repository at a pinned revision, or
-   from the flake `--seed` names, rooted at `/nix/var/nix/gcroots/denbox-seed`;
+   Nix without its daemon is refused. It adds
+   `extra-trusted-substituters` and `extra-trusted-public-keys` for the
+   kit's binary cache to the daemon's `nix.conf`, so that the daemon takes
+   them from the box's user; no other user gets the cache;
+2. builds the seed runtime from this repository's default branch, or from
+   the flake `--seed` names (a revision, a local checkout), rooted at
+   `/nix/var/nix/gcroots/denbox-seed`. The seed runs only until the first
+   activation installs the runtime the box's own lock names;
 3. reads `boxes.<box>.config.home.username` and `.homeDirectory` and creates
    that user with that home when it is missing. The box says who it runs as;
    one user runs one box;

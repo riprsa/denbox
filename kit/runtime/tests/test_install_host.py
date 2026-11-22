@@ -216,9 +216,23 @@ class HostInstaller(unittest.TestCase):
         self.assertIn('User=box\n', self.unit())
         self.assertEqual(len(self.calls('useradd')), 1, 'the user is created once')
         self.assertFalse(any(str(self.root / 'home/box') in args for args in self.calls('chown')), 'the home was chowned')
-        self.assertEqual([a for a in self.calls('systemctl') if a[0] == 'restart'], [['restart', 'denbox-main.service']] * 2)
+        restart = ['restart', 'denbox-main.service']
+        self.assertEqual([a for a in self.calls('systemctl') if a == restart], [restart] * 2)
         self.assertIn(['build', '--out-link', f'{self.root}/nix/var/nix/gcroots/denbox-seed',
-                       'github:riprsa/denbox/86f16e12e5a6f5ce6e58144d77f3a0965ce56e17#runtime'], self.calls('nix'))
+                       'github:riprsa/denbox#runtime'], self.calls('nix'))
+
+    def test_the_daemon_trusts_the_binary_cache_once_and_only_trusts_it(self):
+        conf = self.root / 'etc/nix/nix.conf'
+        conf.parent.mkdir(parents=True)
+        conf.write_text('build-users-group = nixbld')
+        self.install(FAKE_PUBLIC='1')
+        self.install(FAKE_PUBLIC='1')
+        self.assertEqual(conf.read_text().splitlines(), [
+            'build-users-group = nixbld',
+            'extra-trusted-substituters = https://denbox.cachix.org',
+            'extra-trusted-public-keys = denbox.cachix.org-1:0wTpaHGYAg3yirdzhxYjNPnzPjVjBiNoMHaK4Hptx9I='])
+        self.assertEqual([a for a in self.calls('systemctl') if a[0] == 'restart' and 'nix-daemon.service' in a],
+                         [['restart', 'nix-daemon.service']], 'the daemon restarts only when nix.conf changed')
 
     def test_asks_for_what_is_missing_and_the_token_of_a_private_repository(self):
         code, output = self.interactive({
