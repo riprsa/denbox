@@ -59,8 +59,10 @@ docker volume create "$home" > /dev/null
 docker volume create "$store" > /dev/null
 docker create --name "$name" --network none --memory 1g --cpus 2 --pids-limit 1024 \
   --tmpfs /run/denbox:mode=0700 -v "$home:/root" -v "$store:/nix" "$image" > /dev/null
-docker cp "$tmp/srv/." "$name:/srv"
-docker cp "$tmp/secrets" "$name:/run/secrets"
+# As root's files whoever runs this test: Git refuses a repository that
+# another user owns, and docker cp keeps the owner of what it copies.
+tar -C "$tmp/srv" --owner=0 --group=0 -c . | docker cp - "$name:/srv"
+tar -C "$tmp" --owner=0 --group=0 -c secrets | docker cp - "$name:/run"
 docker start "$name" > /dev/null
 # Later commits are made in the container, with an identity of their own.
 in_box 'git config --global user.name test && git config --global user.email test@example.com'
