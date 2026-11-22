@@ -167,8 +167,9 @@ install_nix() {
   echo "$checksum  $temporary/nix.tar.xz" | sha256sum -c --quiet - || fail 'The Nix release does not match its checksum'
   tar -xJf "$temporary/nix.tar.xz" -C "$temporary"
   printf '%s\n' 'experimental-features = nix-command flakes' > "$temporary/nix.conf"
-  "$temporary/nix-$nix_version-$system/install" --daemon --yes --no-channel-add \
-    --nix-extra-conf-file "$temporary/nix.conf" < /dev/null
+  # Nix's files are for every user, not under this script's umask.
+  (umask 022 && "$temporary/nix-$nix_version-$system/install" --daemon --yes --no-channel-add \
+    --nix-extra-conf-file "$temporary/nix.conf" < /dev/null)
 }
 if [[ ! -x $root$nix ]]; then
   install_nix
@@ -246,13 +247,15 @@ if [[ $user != root ]]; then
     fail "The primary group $group of $user is shared; give $user a group of its own"
 fi
 if [[ ! -d $root$home ]]; then
-  mkdir -p "$root$home"
+  (umask 022 && mkdir -p "$root$home")
   chown "$user:$group" "$root$home"
   chmod 0700 "$root$home"
 fi
 
 # The bootstrap and the token: root writes them, the box's user reads them.
-mkdir -p "$root$etc"
+# /etc/denbox lets every box's user through to its own directory.
+install -d -m 0755 "$root/etc/denbox"
+install -d "$root$etc"
 printf '{"version": 2, "repository": "%s", "ref": "%s", "box": "%s"%s}\n' "$repository" "$ref" "$box" \
   "${interval:+, \"sync_interval\": $interval}" > "$temporary/bootstrap.json"
 printf '%s=%s\n' DENBOX_REPOSITORY "$repository" DENBOX_REF "$ref" DENBOX_BOX "$box" DENBOX_SEED "$seed" \
@@ -267,7 +270,7 @@ chmod 0600 "$root$etc/settings"
 
 # denbox on PATH, as in the image: the box's own runtime once its activation
 # installed it, the seed before.
-mkdir -p "$root/usr/local/bin"
+install -d -m 0755 "$root/usr/local/bin"
 cat > "$temporary/denbox" <<EOF
 #!/bin/sh
 # denbox on PATH: the box's own runtime once its activation installed it,
@@ -310,7 +313,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-mkdir -p "$root/etc/systemd/system"
+install -d -m 0755 "$root/etc/systemd/system"
 chmod 0644 "$temporary/unit"
 mv -f "$temporary/unit" "$root/etc/systemd/system/$unit"
 

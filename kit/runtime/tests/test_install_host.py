@@ -191,6 +191,7 @@ class HostInstaller(unittest.TestCase):
         self.assertEqual((etc / 'git_token').read_text().strip(), TOKEN)
         self.assertEqual({p.name: oct(p.stat().st_mode & 0o777) for p in [etc, *etc.iterdir()]},
                          {'main': '0o750', 'bootstrap.json': '0o640', 'git_token': '0o640', 'settings': '0o600'})
+        self.assertEqual(etc.parent.stat().st_mode & 0o777, 0o755)
         self.assertIn(['root:box', str(etc), str(etc / 'bootstrap.json'), str(etc / 'git_token')], self.calls('chown'))
         unit = self.unit()
         for line in ['User=box', 'Group=box', 'RuntimeDirectory=denbox-box', 'Environment=DENBOX_RUN=/run/denbox-box',
