@@ -1,38 +1,32 @@
-# Claude Code and Codex: the commands on PATH, user-wide instructions, skills
-# and MCP servers. Both commands start through the secrets provider with
-# consumer agents.
-{ config, lib, pkgs, ... }:
+# Claude Code and Codex: the commands on PATH, started through the secrets
+# provider with consumer agents, and configuration merged into what each
+# agent reads. The kit does not model either agent's configuration, and it
+# writes no instructions or skills; those are the environment's own files.
+{ config, lib, pkgs, kit, ... }:
 let
   cfg = config.denbox.agents;
   inherit (lib) mkOption types;
   inherit (config.denbox.secrets) provider;
-
-  # One shape for both agents: a local command, or an HTTP endpoint.
-  server = types.submodule {
-    options = {
-      command = mkOption { type = types.nullOr types.str; default = null; description = "Command of a stdio server."; };
-      args = mkOption { type = types.listOf types.str; default = [ ]; description = "Its arguments."; };
-      env = mkOption { type = types.attrsOf types.str; default = { }; description = "Its environment."; };
-      url = mkOption { type = types.nullOr types.str; default = null; description = "URL of a streamable HTTP server."; };
-      headers = mkOption { type = types.attrsOf types.str; default = { }; description = "HTTP headers sent to it."; };
-    };
-  };
-  forClaude = s:
-    if s.url != null then { type = "http"; inherit (s) url headers; }
-    else { type = "stdio"; inherit (s) command args env; };
-  forCodex = s:
-    if s.url != null then { inherit (s) url; http_headers = s.headers; }
-    else { inherit (s) command args env; };
+  json = pkgs.formats.json { };
+  toml = pkgs.formats.toml { };
 
   # A TOML inline value; JSON string escapes are valid TOML.
-  toml = v:
-    if builtins.isAttrs v then "{" + lib.concatStringsSep ", " (lib.mapAttrsToList (k: x: "${builtins.toJSON k} = ${toml x}") v) + "}"
-    else if builtins.isList v then "[" + lib.concatMapStringsSep ", " toml v + "]"
+  tomlValue = v:
+    if builtins.isAttrs v then "{" + lib.concatStringsSep ", " (lib.mapAttrsToList (k: x: "${builtins.toJSON k} = ${tomlValue x}") v) + "}"
+    else if builtins.isList v then "[" + lib.concatMapStringsSep ", " tomlValue v + "]"
     else builtins.toJSON v;
-  # Codex gets the servers as -c overrides, so ~/.codex/config.toml stays
-  # Codex's own, writable file. They come first: a -c of the user's wins.
-  codexFlags = lib.concatStringsSep " " (lib.mapAttrsToList
-    (name: s: "-c " + lib.escapeShellArg "mcp_servers.${name}=${toml (forCodex s)}") cfg.mcpServers);
+  # One `path=value` per leaf of codex.config; a list is a leaf. Codex splits
+  # the path at every dot and takes each part literally, quotes included, so
+  # a key is passed as it is and one Codex cannot address is refused.
+  leaves = path: v:
+    if builtins.isAttrs v then lib.concatLists (lib.mapAttrsToList (k: x:
+      lib.throwIf (k == "" || lib.hasInfix "." k || lib.hasInfix "=" k)
+        "denbox.agents.codex.config: Codex cannot address the key \"${k}\" with -c"
+        (leaves (path ++ [ k ]) x)) v)
+    else [ "${lib.concatStringsSep "." path}=${tomlValue v}" ];
+  # Before the user's arguments, so a -c of the user's wins, and per leaf, so
+  # a table in ~/.codex/config.toml keeps its other keys.
+  codexFlags = lib.concatMapStringsSep " " (o: "-c ${lib.escapeShellArg o}") (leaves [ ] cfg.codex.config);
 
   # Version and help probes run the agent directly, without the provider,
   # so they work without secrets or network.
@@ -52,90 +46,69 @@ let
     exec ${provider} agents -- ${lib.getExe cfg.codex.package} ${codexFlags} "$@"
   '';
 
-  # The instructions file, then the extra lines; built, so instructions may
-  # also be a derivation.
-  hasInstructions = cfg.instructions != null || cfg.extraInstructions != "";
-  instructions = pkgs.runCommand "agent-instructions.md" { inherit (cfg) extraInstructions; } ''
-    { ${lib.optionalString (cfg.instructions != null) "cat ${cfg.instructions}; echo"}
-      printf '%s' "$extraInstructions"; } > "$out"
-  '';
-  # Recursive, so the directories stay writable for skills an agent adds itself.
-  skills = lib.optionalAttrs (cfg.skills != null) { source = cfg.skills; recursive = true; };
-
-  # Claude reads user-scope MCP servers only from the mutable ~/.claude.json,
-  # so ours are merged in on every activation. A broken file must not block
-  # the rest of the activation.
-  claudeServers = builtins.toJSON (lib.mapAttrs (_: forClaude) cfg.mcpServers);
-  claudeMcp = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-    claude_config="$HOME/.claude.json"
-    if [[ ! -v DRY_RUN ]]; then
-      [[ -s "$claude_config" ]] || (umask 077; echo '{}' > "$claude_config")
-      claude_config_new="$(mktemp "$claude_config.XXXXXX")"
-      if ${lib.getExe pkgs.jq} --argjson servers ${lib.escapeShellArg claudeServers} \
-        '.mcpServers = ((.mcpServers // {}) + $servers)' "$claude_config" > "$claude_config_new"; then
-        chmod 0600 "$claude_config_new"
-        mv -f "$claude_config_new" "$claude_config"
-      else
-        rm -f "$claude_config_new"
-        warnEcho "Could not register MCP servers in $claude_config"
-      fi
+  # mergeClaudeServers FILE: merges claude.mcpServers recursively into
+  # .mcpServers of FILE, so servers and keys set by hand stay. Claude reads
+  # user-scope servers only from the mutable ~/.claude.json.
+  mergeClaudeServers = pkgs.writeShellScript "denbox-claude-mcp-servers" ''
+    set -euo pipefail
+    file=$1
+    [[ -s $file ]] || (umask 077; echo '{}' > "$file")
+    new=$(mktemp "$file.XXXXXX")
+    if ${lib.getExe pkgs.jq} --slurpfile ours ${json.generate "claude-mcp-servers.json" cfg.claude.mcpServers} \
+      '.mcpServers = ((.mcpServers // {}) * $ours[0])' "$file" > "$new"; then
+      chmod 0600 "$new"
+      mv -f "$new" "$file"
+    else
+      rm -f "$new"
+      exit 1
     fi
   '';
 
-  agentOptions = name: default: {
+  # enable and package of the agent `name`, packaged as kit.${attr}.
+  agentOptions = name: attr: {
     enable = lib.mkEnableOption name;
     package = mkOption {
       type = types.package;
-      inherit default;
-      defaultText = lib.literalMD "the kit's pin in `kit/nix/packages`";
+      default = kit.${attr};
+      defaultText = lib.literalExpression "kit.${attr}";
       description = "The ${name} package; override to wrap, patch or repin.";
     };
   };
 in
 {
   options.denbox.agents = {
-    claude = agentOptions "Claude Code" (pkgs.callPackage ../packages/claude.nix { });
-    codex = agentOptions "Codex" (pkgs.callPackage ../packages/codex.nix { });
-    instructions = mkOption {
-      type = types.nullOr types.path;
-      default = null;
-      description = "Markdown file given to every enabled agent as its user-wide instructions.";
+    claude = agentOptions "Claude Code" "claude" // {
+      # Any key Claude understands, alwaysLoad and headers included.
+      mcpServers = mkOption {
+        type = types.attrsOf json.type;
+        default = { };
+        example = { docs = { type = "http"; url = "https://mcp.example.com/mcp"; }; };
+        description = "Merged recursively into .mcpServers of ~/.claude.json on activation.";
+      };
     };
-    extraInstructions = mkOption {
-      type = types.lines;
-      default = "";
-      description = "Lines appended to the instructions.";
-    };
-    skills = mkOption {
-      type = types.nullOr types.path;
-      default = null;
-      description = "Directory of skills, one subdirectory each, given to every enabled agent.";
-    };
-    mcpServers = mkOption {
-      type = types.attrsOf server;
-      default = { };
-      example = { docs = { url = "https://mcp.example.com/mcp"; }; };
-      description = "MCP servers registered with every enabled agent, by name.";
+    codex = agentOptions "Codex" "codex" // {
+      # Any key Codex understands; see the comment of `leaves` above.
+      config = mkOption {
+        type = types.attrsOf toml.type;
+        default = { };
+        example = { mcp_servers.docs.url = "https://mcp.example.com/mcp"; };
+        description = "Codex configuration, passed as one `-c dotted.path=value` override per leaf value.";
+      };
     };
   };
 
   config = lib.mkMerge [
-    {
-      assertions = lib.mapAttrsToList (name: s: {
-        assertion = builtins.match "[A-Za-z0-9_-]+" name != null && (s.command == null) != (s.url == null);
-        message = "denbox.agents.mcpServers.${name}: the name must be letters, digits, _ or -, and exactly one of command and url must be set.";
-      }) cfg.mcpServers;
-    }
     (lib.mkIf cfg.claude.enable {
       home.packages = [ claude ];
-      home.file.".claude/CLAUDE.md" = lib.mkIf hasInstructions { source = instructions; };
-      home.file.".claude/skills" = lib.mkIf (cfg.skills != null) skills;
-      home.activation.denboxClaudeMcpServers = lib.mkIf (cfg.mcpServers != { }) claudeMcp;
+      # A broken file must not block the rest of the activation.
+      home.activation.denboxClaudeMcpServers = lib.mkIf (cfg.claude.mcpServers != { }) (lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        if [[ ! -v DRY_RUN ]]; then
+          ${mergeClaudeServers} "$HOME/.claude.json" || warnEcho "Could not merge MCP servers into $HOME/.claude.json"
+        fi
+      '');
     })
     (lib.mkIf cfg.codex.enable {
       home.packages = [ codex ];
-      home.file.".codex/AGENTS.md" = lib.mkIf hasInstructions { source = instructions; };
-      home.file.".agents/skills" = lib.mkIf (cfg.skills != null) skills;
     })
   ];
 }

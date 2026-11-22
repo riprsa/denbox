@@ -91,13 +91,16 @@ Every option lives under `denbox.`. Nothing is on unless the table says so.
 | `denbox.agents.codex.enable`, `.package` | `false`, kit's pin | Codex |
 | `denbox.agents.codex.config` | `{ }` | Codex configuration, passed as one `-c` override per leaf value |
 | `denbox.secrets.provider` | passthrough | see Secrets |
-| `denbox.follow` | `{ }` | flake input name to flake reference (see Sync) |
+| `denbox.follow` | `{ }` | flake input name to a flake reference that names its host, not a registry name (see Sync) |
 
 The kit installs an agent, starts it through the secrets provider and merges
 configuration into the files the agent owns. It does not model an agent's
 configuration: both options above are free-form and take whatever keys that
 agent understands. Merging is per key, never per table, so a key the kit sets
 leaves its neighbours alone, and so does a key the user sets by hand.
+Codex splits a `-c` path at every dot and takes each part literally, so the
+keys of `denbox.agents.codex.config` are passed unquoted, and a key with `.`
+or `=` is refused.
 Instructions, skills and other files an agent reads are the environment's own
 `home.file` entries; the kit writes none of them.
 
@@ -168,7 +171,7 @@ a public one. 1Password is not part of the bootstrap.
    configuration, and unpack that revision into a snapshot without `.git`.
 2. Read `boxes.<box>.follow` from the snapshot.
 3. Build `path:<snapshot>#boxes.<box>`, with `--override-input NAME REF` for
-   every entry of `follow`.
+   every entry of `follow`, `REF` pinned to the revision it resolved to.
 4. Run `<box>/activate`, then reconcile the supervised services with
    `~/.config/denbox/services`.
 
@@ -178,8 +181,10 @@ from its last applied state without network.
 Steps 3 and 4 are skipped while nothing changed: the revision of the
 environment is the one applied and every followed reference still resolves to
 the revision it had then. Resolving a reference asks its host for the current
-revision and evaluates nothing, so an idle box costs a fetch per sync. It still
-reconciles. After an activation, at most once a day, the runtime keeps three
+revision and evaluates nothing, and `follow` is read again only for a new
+revision, so an idle box costs a fetch per sync. A skipped sync still
+reconciles. A reference that cannot be resolved fails the sync and keeps the
+box as it was. After an activation, at most once a day, the runtime keeps three
 generations of the user's profiles and collects the store.
 
 `denbox.follow` is how a kit update reaches boxes without a commit to every

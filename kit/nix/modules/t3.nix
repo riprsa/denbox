@@ -1,6 +1,6 @@
 # T3 Code as the supervised service t3, started through the secrets provider
 # with consumer t3.
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, kit, ... }:
 let
   cfg = config.denbox.t3;
   inherit (config.denbox.secrets) provider;
@@ -25,8 +25,8 @@ in
     enable = lib.mkEnableOption "T3 Code as the service t3";
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.callPackage ../packages/t3.nix { };
-      defaultText = lib.literalMD "the kit's pin, `kit/nix/packages/t3.nix`";
+      default = kit.t3;
+      defaultText = lib.literalExpression "kit.t3";
       description = "The T3 Code package; override to patch or repin.";
     };
     port = lib.mkOption {

@@ -1,5 +1,6 @@
-# Inputs the runtime overrides at every sync: `nix build` gets
-# `--override-input NAME REF` for each entry (docs/design.md, Sync).
+# Inputs the runtime overrides at every sync: it resolves each REF to its
+# current revision and builds with `--override-input NAME <REF at that
+# revision>` (docs/design.md, Sync).
 # mkBoxes exposes the value as `<box>.follow`.
 { lib, ... }:
 {

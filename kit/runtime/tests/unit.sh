@@ -31,7 +31,10 @@ mkdir -p "$HOME" "$FAKE/bin" "$FAKE/store"
 
 # The fake nix: eval prints the snapshot's follow.json, build copies the
 # snapshot's box/ into a store path named after the snapshot and the
-# overrides, and fails when the snapshot has a file named fail.
+# overrides, and fails when the snapshot has a file named fail. flake
+# prefetch resolves a reference by $FAKE/revisions.json; a revision
+# "cached:REV" is Nix's fallback to a revision seen before. eval --expr pins
+# the resolved references as REF?rev=REV.
 cat > "$FAKE/bin/nix" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -41,7 +44,16 @@ case "$1 ${2:-}" in
 esac
 installable=${*: -1}
 case $1 in
+  flake)
+    rev=$(jq -r --arg ref "$installable" '.[$ref] // empty' "$FAKE/revisions.json" 2>/dev/null || true)
+    [[ -n $rev ]] || { echo "error: cannot fetch $installable" >&2; exit 1; }
+    if [[ $rev == cached:* ]]; then
+      rev=${rev#cached:}
+      echo "warning: unable to download $installable; using cached version" >&2
+    fi
+    jq -n --arg url "$installable" --arg rev "$rev" '{locked: {type: "fake", url: $url, rev: $rev}}' ;;
   eval)
+    if [[ $* == *--expr* ]]; then jq -c 'map_values("\(.url)?rev=\(.rev)")' <<<"$DENBOX_LOCKED"; exit 0; fi
     snapshot=${installable#path:}; snapshot=${snapshot%%#*}
     cat "$snapshot/follow.json" 2>/dev/null || echo '{}' ;;
   build)
@@ -113,6 +125,7 @@ git config --file "$HOME/.gitconfig" url."file:///nonexistent/".insteadOf "file:
 
 count() { if [[ -f $1 ]]; then wc -l < "$1"; else echo 0; fi; }
 builds() { grep -c '^build .*path:' "$FAKE/calls" || true; }
+evaluations() { grep -c '^eval .*path:' "$FAKE/calls" || true; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 wait_for() {
   for ((attempt = 0; attempt < 100; attempt++)); do
@@ -178,18 +191,40 @@ echo '{"version": 2}' > "$DENBOX_BOOTSTRAP"
 grep -q 'not valid' "$tmp/err" || fail 'no warning'
 write_bootstrap "file://$repository"
 
-echo '# follow becomes --override-input and --refresh; the same result is not activated again'
+echo '# followed references are resolved first and built pinned; unchanged revisions skip the build'
 echo '{"denbox": "github:example/denbox", "denbox/nixpkgs": "github:example/nixpkgs"}' > "$repository/follow.json"
 commit follow
+echo '{"github:example/denbox": "r1", "github:example/nixpkgs": "n1"}' > "$FAKE/revisions.json"
 activations=$(count "$FAKE/activations")
 "$denbox" sync --once
-grep 'path:' "$FAKE/calls" | tail -1 | grep -- '--refresh --override-input denbox github:example/denbox --override-input denbox/nixpkgs github:example/nixpkgs' > /dev/null ||
+grep '^build .*path:' "$FAKE/calls" | tail -1 |
+  grep -- ' --override-input denbox github:example/denbox?rev=r1 --override-input denbox/nixpkgs github:example/nixpkgs?rev=n1 ' > /dev/null ||
   fail "overrides: $(tail -1 "$FAKE/calls")"
+! grep -q -- '--refresh .*path:' "$FAKE/calls" || fail 'the build refreshes'
 [[ $(count "$FAKE/activations") == $((activations + 1)) ]] || fail 'follow commit not activated'
-before=$(builds)
+before=$(builds) evaluated=$(evaluations)
 "$denbox" sync --once
-[[ $(builds) == $((before + 1)) ]] || fail 'a followed box was not built again'
-[[ $(count "$FAKE/activations") == $((activations + 1)) ]] || fail 'an unchanged build was activated'
+[[ $(builds) == "$before" && $(count "$FAKE/activations") == $((activations + 1)) ]] || fail 'unchanged revisions were built'
+[[ $(evaluations) == "$evaluated" ]] || fail 'an idle sync evaluated the environment'
+
+echo '# a changed followed revision is built and activated'
+echo '{"github:example/denbox": "r2", "github:example/nixpkgs": "n1"}' > "$FAKE/revisions.json"
+"$denbox" sync --once
+[[ $(builds) == $((before + 1)) && $(count "$FAKE/activations") == $((activations + 2)) ]] || fail 'changed revision not applied'
+grep '^build .*path:' "$FAKE/calls" | tail -1 | grep -q 'github:example/denbox?rev=r2 ' || fail 'not built at r2'
+
+echo '# a reference that cannot be resolved fails the sync and keeps the state'
+applied=$(readlink -f "$DENBOX_STATE/applied") fingerprint=$(cat "$DENBOX_STATE/fingerprint") before=$(builds)
+for revisions in '{"github:example/nixpkgs": "n1"}' '{"github:example/denbox": "cached:r2", "github:example/nixpkgs": "n1"}'; do
+  echo "$revisions" > "$FAKE/revisions.json"
+  if "$denbox" sync --once 2>"$tmp/err"; then fail "unresolvable reference reported success: $revisions"; fi
+  grep -q 'Could not resolve github:example/denbox' "$tmp/err" || fail "no error: $(cat "$tmp/err")"
+  [[ $(readlink -f "$DENBOX_STATE/applied") == "$applied" && $(cat "$DENBOX_STATE/fingerprint") == "$fingerprint" &&
+     $(builds) == "$before" ]] || fail "state changed: $revisions"
+done
+echo '{"github:example/denbox": "r2", "github:example/nixpkgs": "n1"}' > "$FAKE/revisions.json"
+"$denbox" sync --once
+[[ $(builds) == "$before" ]] || fail 'a resolvable reference again was built'
 git -C "$repository" rm -q follow.json
 commit 'follow nothing'
 
@@ -232,6 +267,20 @@ commit 'other goes'
 "$denbox" sync --once
 [[ ! -e $DENBOX_RUN/services/other ]] || fail 'removed service still supervised'
 wait_for '! pgrep -f "s6-supervise other" > /dev/null'
+
+echo '# service reconcile applies the services directory now, quietly'
+mkdir -p "$tmp/added"
+printf '#!/bin/sh\nexec sleep 600\n' > "$tmp/added/run"
+chmod +x "$tmp/added/run"
+ln -s "$tmp/added" "$DENBOX_CONFIG/services/added"
+starts=$(count "$FAKE/worker-starts")
+[[ -z $("$denbox" service reconcile 2>&1) ]] || fail 'reconcile printed something'
+wait_for '"$denbox" service status added 2>/dev/null | grep "^added: up " > /dev/null'
+[[ -z $("$denbox" service reconcile 2>&1) ]] || fail 'an unchanged reconcile printed something'
+rm "$DENBOX_CONFIG/services/added"
+"$denbox" service reconcile
+[[ ! -e $DENBOX_RUN/services/added && $(count "$FAKE/worker-starts") == "$starts" ]] || fail 'reconcile did not remove only added'
+if "$denbox" service reconcile worker 2>/dev/null; then fail 'reconcile took a name'; fi
 
 echo '# start, stop and restart'
 "$denbox" service stop worker

@@ -9,6 +9,7 @@
     ./tools.nix
     ./t3.nix
     ./agents.nix
+    ./kit.nix
     ./runtime.nix
   ];
 }

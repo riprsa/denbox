@@ -80,7 +80,9 @@ in_box 'echo 2 > /srv/environment/version && git -C /srv/environment commit -qam
 box denbox sync --once
 wait_for '[ "$(cat /root/worker-version)" = "2 main-1" ]'
 
-echo '# a followed branch is looked at again on every sync'
+echo '# a followed branch is resolved on every sync and built only when it moved'
+output=$(box denbox sync --once 2>&1) || fail "sync --once: $output"
+[[ $output != *Building* ]] || fail "an unchanged followed branch was built: $output"
 in_box 'echo main-2 > /srv/extra/value && git -C /srv/extra commit -qam main-2'
 box denbox sync --once
 wait_for '[ "$(cat /root/worker-version)" = "2 main-2" ]'
