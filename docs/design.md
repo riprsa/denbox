@@ -313,7 +313,18 @@ rules.
   start replaces what the node serves with these entries. A served port
   needs no port published by the host.
 - **Another control server.** `denbox.tailscale.loginServer` points the node
-  at a self-hosted control server. A box is a node of one tailnet.
+  at a self-hosted control server. The module makes a box a node of one
+  tailnet.
+- **A second tailnet** is the environment's own service, never a second
+  tunnel: two `tailscaled` with tunnels in one box overwrite each other's
+  routes and resolver, and both tailnets use `100.64.0.0/10`. The second runs
+  in userspace (`--tun=userspace-networking`) with its own state and socket,
+  and is reached through its SOCKS5 proxy, or transparently with redirect
+  rules in front of it, which the module's `NET_ADMIN` permits. Give the
+  tunnel to the tailnet whose addresses the box's programs reach without
+  configuration, keep that node's `acceptDns` off when the box has a
+  resolver of its own, and leave the tunnel's destinations out of the
+  redirect.
 
 ## denbox-api
 
