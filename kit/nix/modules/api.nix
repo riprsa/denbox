@@ -1,11 +1,8 @@
 # denbox-api, the box's state behind the browser panel, as the supervised
-# service denbox-api. It also serves the bundle of denbox.browser.parts, to
-# which it adds the kit's own part, panel.
+# service denbox-api. It serves data only; the extension's code comes from Git.
 { config, lib, pkgs, ... }:
 let
   cfg = config.denbox;
-  parts = cfg.browser.parts;
-  bundle = pkgs.callPackage ../packages/browser-bundle.nix { inherit parts; };
   api = pkgs.callPackage ../packages/denbox-api.nix { };
 in
 {
@@ -30,18 +27,12 @@ in
 
   # denbox-api calls `denbox service`, found on the box's PATH.
   config = lib.mkIf cfg.api.enable {
-    # The page that shows what denbox-api reports; every box with the API has it.
-    denbox.browser.parts.panel.pages.panel = {
-      html = ../../browser/panel/panel.html;
-      js = ../../browser/panel/panel.js;
-    };
     denbox.services.denbox-api = pkgs.writeShellScript "denbox-api-service" ''
       export PATH=${lib.makeBinPath [ pkgs.iproute2 pkgs.coreutils ]}:$PATH
       export DENBOX_API_ADDRESS=${lib.escapeShellArg cfg.api.address}
       export DENBOX_INTERFACE=${lib.escapeShellArg cfg.api.interface}
       export DENBOX_OPTIONAL_SERVICES=${lib.escapeShellArg (lib.concatStringsSep " " cfg.optionalServices)}
       export DENBOX_OPTIONAL_SERVICES_DIR="$HOME/.local/state/denbox/optional-services"
-      ${lib.optionalString (parts != { }) "export DENBOX_BUNDLE=${bundle}"}
       exec ${lib.getExe api}
     '';
   };

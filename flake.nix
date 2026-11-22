@@ -52,6 +52,12 @@
         boxes = lib.mapAttrs (_: mkBox system) boxes;
       });
 
+      # `mkBundle pkgs { <name> = { background, content, pages }; }`: the
+      # bundle file the extension loads from a source, built from parts with
+      # file paths in place of text (docs/design.md, Browser). A repository
+      # that is a source commits the result.
+      lib.mkBundle = pkgs: parts: pkgs.callPackage ./kit/nix/packages/browser-bundle.nix { inherit parts; };
+
       packages = forAllSystems (pkgs: rec {
         denbox-api = pkgs.callPackage ./kit/nix/packages/denbox-api.nix { };
         t3 = pkgs.callPackage ./kit/nix/packages/t3.nix { };
@@ -74,6 +80,7 @@
             inherit home-manager;
             module = self.homeManagerModules.default;
           };
+          bundle = pkgs.callPackage ./kit/nix/checks/bundle.nix { inherit (self.lib) mkBundle; };
           boxes = pkgs.callPackage ./kit/nix/checks/boxes.nix {
             inherit system;
             kit = self;

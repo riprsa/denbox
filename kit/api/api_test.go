@@ -14,7 +14,7 @@ import (
 )
 
 // A box with three services (code-server optional and off), three listeners
-// and a cgroup at 0.9 of 3 GiB, and a browser bundle. The supervisor is a fake
+// and a cgroup at 0.9 of 3 GiB. The supervisor is a fake
 // `denbox service`. Every fake command appends "<name> <args>" to root/calls;
 // status and ss reads are left out.
 type fixture struct {
@@ -54,8 +54,6 @@ func newFixture(t *testing.T) *fixture {
 		must(t, os.WriteFile(filepath.Join(proc, path), []byte(text), 0o600))
 	}
 	optional := filepath.Join(root, "optional")
-	bundle := filepath.Join(root, "bundle.json")
-	must(t, os.WriteFile(bundle, []byte(`{"version":1,"parts":{}}`), 0o600))
 	server := httptest.NewServer(New(Options{
 		Service: []string{fake("denbox", `[ "$2" = status ] && printf '%s\n' 'code-server: up (pid 227) 286 seconds' 'denbox-api: up (pid 193) 286 seconds' 't3: down (exitcode 1) 3 seconds, ready 3 seconds'
 true`), "service"},
@@ -67,7 +65,6 @@ true`), "service"},
 		ProcRoot:            proc,
 		OptionalServices:    []string{"code-server"},
 		OptionalServicesDir: optional,
-		Bundle:              bundle,
 	}))
 	t.Cleanup(server.Close)
 	return &fixture{root: root, optionalDir: optional, server: server}
@@ -112,23 +109,6 @@ func TestRejectsRequestsWithoutGuardHeader(t *testing.T) {
 	f := newFixture(t)
 	if code, _ := f.call(t, http.MethodGet, "/state", nil, false); code != 403 {
 		t.Fatal(code)
-	}
-}
-
-func TestServesTheBundleOrNotFoundWithoutOne(t *testing.T) {
-	f := newFixture(t)
-	if code, body := f.call(t, http.MethodGet, "/bundle.json", nil, true); code != 200 || body != `{"version":1,"parts":{}}` {
-		t.Fatalf("%d %s", code, body)
-	}
-	if code, _ := f.call(t, http.MethodGet, "/bundle.json", nil, false); code != 403 {
-		t.Fatal(code)
-	}
-	request := httptest.NewRequest(http.MethodGet, "/bundle.json", nil)
-	request.Header.Set("x-denbox-api", "1")
-	recorder := httptest.NewRecorder()
-	New(Options{}).ServeHTTP(recorder, request)
-	if recorder.Code != 404 {
-		t.Fatal(recorder.Code)
 	}
 }
 

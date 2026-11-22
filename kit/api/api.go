@@ -1,7 +1,8 @@
 // Package api serves a box's machine state to the browser panel: memory, CPU
 // and traffic of its cgroup, the supervised services with restart and on/off
 // controls, and the listening ports. It runs inside the box and is reached
-// only through the box's private front door.
+// only through the box's private front door. It answers data, never code: the
+// extension runs only code from Git (docs/design.md, Trust).
 package api
 
 import (
@@ -10,7 +11,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -35,9 +35,6 @@ type Options struct {
 	OptionalServicesDir string
 	// SelfService is this API's own service, restarted last.
 	SelfService string
-	// Bundle is the browser bundle served at /bundle.json; empty when the box
-	// has no browser parts.
-	Bundle string
 }
 
 // Web pages cannot send this header cross-origin without a CORS preflight,
@@ -135,13 +132,6 @@ func decode[T any](body []byte) (T, error) {
 func (a *App) routes() map[string]handler {
 	return map[string]handler{
 		"GET /state": func([]byte) (any, error) { return a.state(), nil },
-		"GET /bundle.json": func([]byte) (any, error) {
-			if a.Bundle == "" {
-				return nil, statusError{http.StatusNotFound, errors.New("this box has no browser parts")}
-			}
-			raw, err := os.ReadFile(a.Bundle)
-			return json.RawMessage(raw), err
-		},
 		"POST /services/restart": func(body []byte) (any, error) {
 			request, err := decode[struct {
 				Name string `json:"name"`

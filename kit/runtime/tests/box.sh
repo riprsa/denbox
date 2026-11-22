@@ -97,8 +97,6 @@ state=$(box "$curl" -fsS -H 'x-denbox-api: 1' http://127.0.0.1:48099/state)
 jq -e '(keys == ["ports", "services", "system"]) and all(.[]; type != "object" or .state != "unavailable")' \
   <<<"$state" > /dev/null || fail "state: $state"
 jq -e '[.services[].name] | index("t3") and index("denbox-api")' <<<"$state" > /dev/null || fail "services: $state"
-box "$curl" -fsS -H 'x-denbox-api: 1' http://127.0.0.1:48099/bundle.json | jq -e '.parts.panel.pages.panel' > /dev/null ||
-  fail 'bundle has no panel'
 code=$(box "$curl" -s -o /dev/null -w '%{http_code}' http://127.0.0.1:48099/state)
 [[ $code == 403 ]] || fail "request without the header answered $code"
 
