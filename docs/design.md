@@ -110,6 +110,7 @@ Every option lives under `denbox.`. Nothing is on unless the table says so.
 | `denbox.host.capabilities` | `[ ]` | capabilities added, without `CAP_`, such as `NET_ADMIN` |
 | `denbox.host.binds` | `[ ]` | `{ source, target, readOnly ? true }`, host paths bound in |
 | `denbox.host.dns` | `[ ]` | resolvers, IPv4; empty for the host's |
+| `denbox.host.secrets.<name>` | `{ }` | `{ description, target ? "/run/secrets/denbox_<name>", allowEmpty ? false }`, a file the host provides |
 
 The kit installs an agent, starts it through the secrets provider and merges
 configuration into the files the agent owns. It does not model an agent's
@@ -138,13 +139,15 @@ The kit knows nothing about a particular proxy, vault or cluster.
 | `~/.local/state/denbox/logs/NAME/current` | a service's log, 10 x 1 MB |
 | `/run/denbox/` | s6 scan directory (`services/`) and locks; gone on restart, and may be `noexec`. `/run/denbox-USER/` for a box whose user is not root |
 | `/run/secrets/denbox_bootstrap`, `/run/secrets/denbox_git_token` | the bootstrap, mounted by the host; a machine passes other paths (see Hosts) |
-| `/run/secrets/denbox_tailscale_authkey` | the key a box joins its tailnet with, when the host gives one |
+| `/run/secrets/denbox_NAME` | a secret the box declares in `denbox.host.secrets.NAME`, by default |
+| `/run/secrets/denbox_tailscale_authkey` | the key a box joins its tailnet with, the Tailscale module's secret `tailscale_authkey` |
 | `~/.local/state/denbox/tailscale/` | the node's identity in the tailnet; it survives restarts with the home |
 
 One command, `denbox`, replaces the set of commands the predecessor had:
 
     denbox supervise                      s6 over the services and the sync loop, under tini or systemd; refused while one runs
     denbox sync [--once]                  fetch, build, activate, reconcile services
+    denbox host                           print boxes.<box>.host of the bootstrap's environment, followed as a sync does; builds nothing
     denbox service status [NAME]
     denbox service start|stop|restart NAME
     denbox service reconcile              make the supervised services match ~/.config/denbox/services now
@@ -284,8 +287,9 @@ rules.
   so a setting changed by hand with `tailscale set` lasts until the next
   start. A sync that changes an option restarts the service.
 - **Joining.** A box that is not logged in joins with the key in
-  `/run/secrets/denbox_tailscale_authkey`. The key comes from the host and
-  not through the secrets provider, because a provider may itself be reachable
+  `/run/secrets/denbox_tailscale_authkey`, which the module declares as the
+  secret `tailscale_authkey` that may be empty. The key comes from the host
+  and not through the secrets provider, because a provider may itself be reachable
   only inside the tailnet. It is needed once; without it the service waits and
   `tailscale login` in the box prints a URL to log in by hand (with
   `--login-server` for another control server; the service's log names the
@@ -294,10 +298,11 @@ rules.
   when the box is gone), not of the box.
 - **The tunnel.** By default the box has a tunnel device, so every program in
   it reaches the tailnet without knowing, and what it sends arrives as the
-  box. The host has to grant that: `deploy/compose.tailscale.yaml` adds
-  `/dev/net/tun`, the `NET_ADMIN` capability and the key's secret. On a host
+  box. The host has to grant that, and the module asks for it in
+  `denbox.host`: the device `/dev/net/tun` and the capability `NET_ADMIN`,
+  next to the key. `install.sh` shows the request and asks for the key. On a host
   that grants neither, `denbox.tailscale.userspace` runs the node without a
-  device: the tailnet still reaches the box, and programs in the box reach
+  device, and the module asks for the key only: the tailnet still reaches the box, and programs in the box reach
   the tailnet only through the proxy `tailscaled` then offers, SOCKS5 and
   HTTP on `127.0.0.1:1055`. A box without the device or the capability and
   without `userspace` does not fall back: its service says why and stays down.
@@ -339,6 +344,11 @@ been written by someone else. Two rules follow.
   extension runs bundles from a branch of a repository. That is a gate only
   while the branch is protected and no credential inside a box can push to it
   or merge into it. Give agents an account of their own, without that right.
+- **The host decides what a box gets.** A box asks for ports, devices,
+  capabilities, host paths and secrets in its environment, so a commit can
+  ask for more. The installer shows the request and starts the box only when
+  a person accepts it, and asks again whenever it changed; a box that is
+  running keeps what it was started with until then.
 - **A box in a tailnet is still a box.** Without Tailscale of its own it
   shares its host's place in the network and reaches whatever the host
   reaches. As a node it can be given a tag and exactly the access a box
@@ -398,8 +408,16 @@ denbox.host = {
   capabilities = [ "NET_ADMIN" ];
   ports.web = { port = 8080; address = "0.0.0.0"; };
   binds = [{ source = "/srv/data"; target = "/data"; }];
+  secrets.api_key.description = "Key of the example API";
 };
 ```
+
+A secret is a file the host provides and keeps, such as a key: a name of
+lowercase letters, digits and `_`, where it appears in the box (`target`,
+by default `/run/secrets/denbox_<name>`, read-only), whether it may be empty,
+and one line telling the person asked for it what it is. The Tailscale
+module declares its key so. A secret is for what the box needs before its
+secrets provider can run; anything else belongs to the provider.
 
 Every value is typed narrowly enough that whatever evaluates can be written
 into a Compose file or a systemd unit without quoting: paths and sizes of a
@@ -410,43 +428,45 @@ port published twice, fails the evaluation with the option's name.
 `deploy/render` turns it into a deployment, adding what only the host knows:
 the box's name, the image and where the bootstrap and token files are.
 
-    deploy/render --format compose --name NAME --image IMAGE --bootstrap FILE --token FILE HOST.json
-    deploy/render --format quadlet --name NAME --image IMAGE --bootstrap FILE --token FILE --output DIR HOST.json
+    deploy/render --format compose --name NAME --image IMAGE --bootstrap FILE --token FILE [--secret NAME=FILE]... HOST.json
+    deploy/render --format quadlet --name NAME --image IMAGE --bootstrap FILE --token FILE [--secret NAME=FILE]... --output DIR HOST.json
     deploy/render --explain --name NAME HOST.json
 
-`compose` prints one Compose file; for a box that asks for nothing special it
-is the same deployment as `deploy/compose.yaml`. `quadlet` writes the Podman
+`compose` prints one Compose file for the container `denbox-NAME`: home
+and Nix volumes, the bootstrap and every declared secret as Compose secrets,
+`/tmp` and `/run/denbox` as tmpfs, and the rest of the declaration.
+Every declared secret needs one `--secret` and every `--secret` a declared
+secret. `quadlet` writes the Podman
 Quadlet units `denbox-NAME.container`, `denbox-NAME-home.volume` and
 `denbox-NAME-nix.volume`. Relative file paths are relative to the Compose
 project directory, or to the directory of the units. `--explain` prints what
 the box asks for in words, with what weakens its isolation from the host
 first, each marked `!`: capabilities, devices, host paths, ports bound beyond
-loopback. The script refuses, with status 65, a declaration it cannot express
-exactly, a key it does not know included; it never drops one. It needs bash
-and jq.
+loopback; then ports on loopback, secrets, limits and the resolver. The
+script refuses, with status 65, a declaration it cannot express exactly, a
+key it does not know included; it never drops one. It needs bash and jq,
+and the image carries it as `/usr/local/share/denbox/render`.
 
 A change to an environment's repository must not quietly hand a container
-more of the host. A host that deploys from the declaration shows the
-explanation before it starts a box, and again whenever it differs from the
-one accepted last, and starts the box only when a person agrees.
+more of the host. `install.sh` shows the explanation before it starts a box,
+and again, with the lines that changed, whenever it differs from the one
+accepted last, and starts the box only when a person agrees (see Hosts).
 
 ## Hosts
 
 A box needs Linux, Nix and something that runs `denbox supervise` at start.
 
-- **Docker**, the first host. `image/` builds the image; `deploy/compose.yaml`
-  is the standard deployment (home and Nix volumes, the two bootstrap
-  secrets, loopback ports). `deploy/compose.tailscale.yaml` is the overlay for
-  a box that joins a tailnet. An environment can add Compose overlays from
-  its repository; `deploy/render --format compose` writes the deployment from
-  the box's `denbox.host` instead.
+- **Docker**, the first host. `image/` builds the image;
+  `deploy/render --format compose` writes the deployment from the box's
+  `denbox.host`, and `install.sh` starts it with Compose.
 - **Podman**, rootless or not: the same image, deployed as Quadlet units
   from `deploy/render --format quadlet` and started as a systemd service,
   `systemctl --user start denbox-NAME` for a user's. Rootless Podman sets a
   memory, CPU or process limit only through a cgroup controller that systemd
   delegates to the user; most distributions delegate memory and pids, and
   cpu needs `Delegate=` in a drop-in for `user@.service`. On SELinux, the
-  bootstrap files are relabeled for the container; a bound host path is not.
+  bootstrap and secret files are relabeled for the container; a bound host
+  path is not.
 - **Baked image**, for short-lived boxes: the same image with one box already
   built into its store, made by the environment's CI. It starts without a
   build and without volumes.
@@ -454,9 +474,52 @@ A box needs Linux, Nix and something that runs `denbox supervise` at start.
   example, without a container. See below.
 - **Incus**, later.
 
-`install.sh` asks for the environment repository, the box name and, for a
-private repository, a token. It pulls the public image and starts Compose.
-With `--tailscale` it adds the overlay and asks for the key.
+`install.sh` installs or updates one box on Docker or Podman; it needs bash
+and the container runtime, and runs everything else in throwaway containers
+of the image.
+
+1. It asks for the environment repository, the branch, the box name and, for
+   a private repository, a token, and pulls the image.
+2. It evaluates `boxes.<box>.host` with `denbox host` in a container of the
+   image over the box's Nix volume: the environment fetched at the branch
+   and `follow` honoured as the sync does, nothing built. What the
+   evaluation fetches stays in the store, so the box's first build does not
+   fetch it again; on a first install it costs about as long as fetching and
+   evaluating the environment's inputs takes, nixpkgs and Home Manager for a
+   box of the kit. The bootstrap and the token go in on standard input,
+   never on a command line or in a container's environment.
+3. It shows `deploy/render --explain` and asks before it writes or starts
+   anything. On an update it compares with the request accepted last, kept in
+   `DIR/accepted`, and asks again only when it changed, listing the lines
+   that went and came. `--accept` (`DENBOX_ACCEPT=1`) accepts without
+   asking; an unattended run without it stops when the request changed.
+4. It asks for every declared secret like the token: `--secret-file
+   NAME=FILE`, the variable `DENBOX_SECRET_<NAME>`, or the terminal without
+   echo. They are kept as mode-0600 files in `DIR/secrets` across updates.
+5. It renders the deployment into the install directory and starts it:
+   `--runtime docker` (the default where Docker is installed) runs
+   `DIR/compose.yaml` with Compose; `--runtime podman` copies the units of
+   `DIR/quadlet` to `~/.config/containers/systemd` and restarts the user
+   service `denbox-NAME`.
+
+### Moving an installation
+
+An installation made before the installer read `denbox.host` keeps its
+repository, branch, box, name and image in `.env`, and the next run of
+`install.sh` reads them. The settings that shaped the container are now
+options of the box, set in its environment:
+
+| Former setting | Now |
+| --- | --- |
+| `DENBOX_BIND_IP` | `denbox.host.ports.<name>.address` |
+| `DENBOX_T3_PORT`, `DENBOX_API_PORT` | `denbox.host.ports.t3.hostPort`, `denbox.host.ports.api.hostPort` |
+| `DENBOX_CPUS`, `DENBOX_MEMORY`, `DENBOX_PIDS` | `denbox.host.cpus`, `.memory`, `.pids` |
+| `install.sh --tailscale`, `deploy/compose.tailscale.yaml` | `denbox.tailscale.enable`, which asks for the device, the capability and the key |
+| `--tailscale-authkey-file FILE`, `DENBOX_TAILSCALE_AUTHKEY` | `--secret-file tailscale_authkey=FILE`, `DENBOX_SECRET_TAILSCALE_AUTHKEY` |
+
+A key already given stays where the box finds it if it is moved into the
+secrets directory: `mkdir -p DIR/secrets && mv DIR/tailscale_authkey
+DIR/secrets/`. `compose.tailscale.yaml` in the directory can be deleted.
 
 ### A machine
 
@@ -515,7 +578,7 @@ kit/nix/checks/           flake checks beyond the package builds
 kit/runtime/              the denbox command
 extension/                the browser extension, the panel included
 image/                    Dockerfile, the denbox launcher, root's login shell
-deploy/, install.sh       standard Compose deployment, deploy/render, installer
+deploy/, install.sh       deploy/render, its tests, the installer
 install-host.sh           installer for a machine with systemd
 template/                 what `nix flake init -t github:riprsa/denbox` writes
 docs/                     this file

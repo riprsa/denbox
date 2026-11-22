@@ -1,6 +1,6 @@
 # What a box asks of the machine that runs its container: published ports,
-# limits, the size of /tmp and /dev/shm, devices, capabilities, host paths
-# and a resolver. mkBoxes exposes the value as `<box>.host`, and
+# limits, the size of /tmp and /dev/shm, devices, capabilities, host paths,
+# a resolver and files the host provides as secrets. mkBoxes exposes the value as `<box>.host`, and
 # deploy/render turns it into a Compose file or Podman Quadlet units
 # (docs/design.md, What a box asks of its host). The defaults are those of
 # the standard deployment. A module that knows a requirement declares it
@@ -21,6 +21,9 @@ let
   capability = types.addCheck (matching "capability without the CAP_ prefix, such as NET_ADMIN" "[A-Z][A-Z0-9_]*")
     (c: !lib.hasPrefix "CAP_" c);
   portNumber = types.ints.between 1 65535;
+  # Paths the deployment mounts itself; neither a bind nor a secret may take one.
+  reserved = [ "/root" "/nix" "/tmp" "/dev/shm" "/run/denbox" "/run/secrets"
+    "/run/secrets/denbox_bootstrap" "/run/secrets/denbox_git_token" ];
 
   # A port of the box published on the host.
   port = types.submodule ({ config, ... }: {
@@ -61,6 +64,31 @@ let
       };
     };
   };
+
+  # A file the host provides, such as a key: the installer asks a person
+  # for it and stores it; deploy/render mounts it read-only.
+  secret = types.submodule ({ name, ... }: {
+    options = {
+      target = mkOption {
+        type = path;
+        default = "/run/secrets/denbox_${name}";
+        defaultText = lib.literalExpression ''"/run/secrets/denbox_''${name}"'';
+        description = "Where the file appears in the box.";
+      };
+      allowEmpty = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Whether the host may give an empty file, for a secret the box can do without.";
+      };
+      description = mkOption {
+        type = matching "one line of printable ASCII, at most 200 characters" "[ -~]{1,200}";
+        example = "Tailscale auth key the box joins its tailnet with";
+        description = "What the secret is, in one line for the person asked for it.";
+      };
+    };
+  });
+  secretName = name: builtins.match "[a-z][a-z0-9_]*" name != null && !lib.elem name [ "bootstrap" "git_token" ];
+  targets = map (s: s.target) (lib.attrValues cfg.secrets) ++ map (b: b.target) cfg.binds;
 in
 {
   options.denbox.host = {
@@ -121,6 +149,15 @@ in
       description = "Host paths bound into the box, read-only unless they say otherwise.";
     };
 
+    # By name, the name in lowercase letters, digits and _, as the installer
+    # asks for it: --secret-file NAME=FILE or DENBOX_SECRET_<NAME>.
+    secrets = mkOption {
+      type = types.attrsOf secret;
+      default = { };
+      example = { api_key = { description = "Key of the example API"; }; };
+      description = "Files the host provides as secrets, by name.";
+    };
+
     dns = mkOption {
       type = types.listOf ipv4;
       default = [ ];
@@ -130,8 +167,18 @@ in
   };
 
   # Two ports on one host port collide when they share an address or one
-  # of them takes every address.
-  config.assertions = lib.mapAttrsToList (hostPort: ports: {
+  # of them takes every address. Secrets have names the installer can ask
+  # for and places of their own.
+  config.assertions = [
+    {
+      assertion = lib.all secretName (lib.attrNames cfg.secrets);
+      message = "denbox.host.secrets: a name is lowercase letters, digits and _, starts with a letter, and is not bootstrap or git_token: ${toString (lib.attrNames cfg.secrets)}";
+    }
+    {
+      assertion = lib.allUnique targets && !lib.any (t: lib.elem t reserved) targets;
+      message = "denbox.host: two secrets or binds share a target, or one takes a path the deployment mounts: ${toString targets}";
+    }
+  ] ++ lib.mapAttrsToList (hostPort: ports: {
     assertion = lib.length ports == 1
       || (!lib.elem "0.0.0.0" (map (p: p.address) ports) && lib.allUnique (map (p: p.address) ports));
     message = "denbox.host.ports: host port ${hostPort} is published twice (${lib.concatMapStringsSep ", " (p: p.name) ports})";

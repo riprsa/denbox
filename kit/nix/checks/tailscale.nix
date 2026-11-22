@@ -1,7 +1,8 @@
 # Evaluates the Tailscale module through lib.mkBoxes: off, on with every
 # setting and two serve entries, and in userspace. Checks the service and
-# serve configuration the options produce, and that a serve entry of a bad
-# shape fails evaluation.
+# serve configuration the options produce, what the box asks of its host
+# (the tunnel device, NET_ADMIN and the key; in userspace the key only), and
+# that a serve entry of a bad shape fails evaluation.
 { system, kit, lib, runCommand, tailscale }:
 let
   boxes = (kit.lib.mkBoxes {
@@ -35,6 +36,11 @@ let
     in (builtins.tryEval (builtins.deepSeq box.config.denbox.tailscale.serve box.drvPath)).success;
 in
 assert !(off.config.denbox.services ? tailscale);
+assert off.host.devices == [ ] && off.host.capabilities == [ ] && off.host.secrets == { };
+assert on.host.devices == [ "/dev/net/tun" ] && on.host.capabilities == [ "NET_ADMIN" ];
+assert userspace.host.devices == [ ] && userspace.host.capabilities == [ ];
+assert lib.all (box: box.host.secrets.tailscale_authkey.target == "/run/secrets/denbox_tailscale_authkey"
+  && box.host.secrets.tailscale_authkey.allowEmpty) [ on userspace ];
 assert on.config.denbox.tailscale.hostname == "on";
 assert on.config.denbox.name == "on";
 # The shapes the module refuses: a target without a scheme, a path without

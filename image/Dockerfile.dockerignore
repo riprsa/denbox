@@ -1,9 +1,8 @@
-# The image needs the flake, the kit, its own files and the deployment.
+# The image needs the flake, the kit, its own files and deploy/render.
 *
 !flake.nix
 !flake.lock
 !kit
 !image
-!deploy/compose.yaml
-!deploy/compose.tailscale.yaml
+!deploy/render
 kit/runtime/tests

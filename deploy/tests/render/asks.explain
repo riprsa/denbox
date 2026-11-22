@@ -5,6 +5,8 @@ The box personal asks this host for:
 ! host path /srv/cache at /root/cache, writable
 ! port 8080 as 0.0.0.0:8080 (web), reachable beyond this machine
   port 3773 as 127.0.0.1:13773 (t3)
+  secret key at /etc/example/key, may be empty: Key of the example service; empty to log in by hand
+  secret token at /run/secrets/denbox_token: Token of the example API
   memory 8g, 0.5 CPUs, 4096 processes
   /tmp 4g, /dev/shm 2g
   resolvers 1.1.1.1, 9.9.9.9

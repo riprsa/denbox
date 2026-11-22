@@ -1,1 +1,1 @@
-{"binds":[],"capabilities":[],"cpus":2,"devices":[],"dns":[],"memory":"4g","pids":2048,"ports":{},"shmSize":"64m","tmpSize":null,"sysctls":{"net.ipv4.ip_forward":"1"}}
+{"binds":[],"capabilities":[],"cpus":2,"devices":[],"dns":[],"memory":"4g","pids":2048,"ports":{},"secrets":{},"shmSize":"64m","sysctls":{"net.ipv4.ip_forward":"1"},"tmpSize":null}

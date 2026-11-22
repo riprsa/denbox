@@ -18,19 +18,22 @@ A box runs as a Docker container or straight on a Linux machine with systemd.
 1. **An environment.** Copy `template/` into a new Git repository (or run
    `nix flake init -t github:riprsa/denbox` in one), edit `flake.nix` and push.
    See [template/README.md](template/README.md).
-2. **A box.** On a host with Docker and Compose, run
+2. **A box.** On a host with Docker and Compose, or Podman with a user
+   systemd, run
 
    ```sh
    bash install.sh
    ```
 
    It asks for the repository URL, the branch, the box name and, for a
-   private repository, a token that can read it. It writes the installation
-   to `./denbox-<box>`, creates the box's home and Nix volumes and starts the
-   box. The first build takes a while; follow it with
-   `cd denbox-<box> && docker compose logs -f box`. Run the installer again
-   with the same `--dir` to update the image. `bash install.sh --help` and
-   the top of the script list the options for unattended use.
+   private repository, a token that can read it. It reads what the box asks
+   of its host from the environment, shows it and asks before it starts
+   anything, then asks for each secret the box declares. It writes the
+   installation to `./denbox-<box>` and starts the box. The first build takes
+   a while; follow it with `cd denbox-<box> && docker compose logs -f box`.
+   Run the installer again with the same `--dir` to update the image; it asks
+   again only when the request changed. `bash install.sh --help` and the top
+   of the script list the options for unattended use, `--accept` among them.
 3. **The extension.** Load `extension/` unpacked and set its box address to
    the box's API, `http://127.0.0.1:48099` on the Docker host. The box only
    supplies data; code the extension runs comes from sources on a protected
@@ -45,11 +48,12 @@ locally instead. See [Binary cache](docs/design.md#binary-cache).
 
 ## What a box asks of its host
 
-Ports, limits, the size of `/tmp` and `/dev/shm`, devices, capabilities and
-host paths are options of the box too, under `denbox.host`, so the
-environment's repository describes everything. `deploy/render` turns them
-into a Compose file or Podman Quadlet units, and explains in words what the
-box asks for, what weakens its isolation first:
+Ports, limits, the size of `/tmp` and `/dev/shm`, devices, capabilities,
+host paths and secrets the host provides are options of the box too, under
+`denbox.host`, so the environment's repository describes everything.
+`install.sh` reads them from there. `deploy/render` turns them into a Compose
+file or Podman Quadlet units, and explains in words what the box asks for,
+what weakens its isolation first:
 
 ```sh
 nix eval --json .#boxes.main.host > host.json
@@ -87,13 +91,13 @@ name, address and entry in the tailnet's access rules, and
 `denbox.tailscale.serve` publishes its ports to the tailnet with the
 tailnet's certificate instead of through the host.
 
-- **The host** grants the tunnel device and the key:
-  `bash install.sh --tailscale` adds
-  [deploy/compose.tailscale.yaml](deploy/compose.tailscale.yaml) and asks for
-  an auth key without echo (or reads `--tailscale-authkey-file`). The key is
-  used once, at the first start; leave it empty to run `tailscale login` in
-  the box instead. A host that grants no device runs the box with
-  `denbox.tailscale.userspace = true`.
+- **The host** grants the tunnel device and the key. The module asks for
+  both in `denbox.host`, so `install.sh` shows the device and the
+  `NET_ADMIN` capability in the request and asks for the auth key without
+  echo (or reads `--secret-file tailscale_authkey=FILE`). The key is used
+  once, at the first start; leave it empty to run `tailscale login` in the
+  box instead. A host that grants no device runs the box with
+  `denbox.tailscale.userspace = true`, which asks for the key only.
 - **Tag the node and restrict it.** Ask for a tag such as `tag:denbox` in
   `denbox.tailscale.tags`, create the key for that tag, and give the tag
   only the access a box needs in the tailnet's rules. A box in a tailnet

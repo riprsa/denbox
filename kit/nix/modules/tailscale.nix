@@ -109,8 +109,9 @@ let
   checkTunnel = lib.optionalString (!cfg.userspace) ''
     capabilities=$(sed -n 's/^CapEff:[[:space:]]*//p' /proc/self/status)
     if [[ ! -c /dev/net/tun ]] || (( (16#''${capabilities:-0} >> 12 & 1) == 0 )); then
-      echo "denbox: tailscale needs /dev/net/tun and the NET_ADMIN capability. Start the box with" \
-        "deploy/compose.tailscale.yaml, or set denbox.tailscale.userspace = true for a node without a tunnel."
+      echo "denbox: tailscale needs /dev/net/tun and the NET_ADMIN capability, which the box asks for in" \
+        "denbox.host. Start it from a deployment rendered from that (install.sh does), or set" \
+        "denbox.tailscale.userspace = true for a node without a tunnel."
       ${pkgs.s6}/bin/s6-svc -d .
       exit 1
     fi
@@ -199,5 +200,15 @@ in
     ];
     home.packages = [ cli ];
     denbox.services.tailscale = service;
+    # What the host grants: the tunnel unless in userspace, and the key.
+    denbox.host = {
+      devices = lib.optional (!cfg.userspace) "/dev/net/tun";
+      capabilities = lib.optional (!cfg.userspace) "NET_ADMIN";
+      secrets.tailscale_authkey = {
+        target = keyFile;
+        allowEmpty = true;
+        description = "Tailscale auth key the box joins its tailnet with, used once; empty to run tailscale login in the box";
+      };
+    };
   };
 }

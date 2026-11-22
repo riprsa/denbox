@@ -1,1 +1,1 @@
-{"binds":[{"source":"/srv/x","target":"/nix","readOnly":true},{"source":"/srv/$HOME","target":"/y","readOnly":true}],"capabilities":[],"cpus":2,"devices":[],"dns":[],"memory":"4g","pids":2048,"ports":{},"shmSize":"64m","tmpSize":null}
+{"binds":[{"readOnly":true,"source":"/srv/x","target":"/nix"},{"readOnly":true,"source":"/srv/$HOME","target":"/y"}],"capabilities":[],"cpus":2,"devices":[],"dns":[],"memory":"4g","pids":2048,"ports":{},"secrets":{},"shmSize":"64m","tmpSize":null}

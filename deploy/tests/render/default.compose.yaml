@@ -4,6 +4,7 @@ name: "denbox-personal"
 services:
   box:
     image: "ghcr.io/riprsa/denbox:latest"
+    container_name: "denbox-personal"
     # T3 Code labels the environment with the hostname.
     hostname: "personal"
     restart: unless-stopped
