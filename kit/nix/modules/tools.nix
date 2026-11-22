@@ -15,6 +15,10 @@ in
     programs.fish = {
       enable = true;
       interactiveShellInit = "set -g fish_greeting";
+      # The generator runs fish at build time, which writes into $HOME. A box
+      # builds as root without a sandbox, where that creates /homeless-shelter
+      # and Nix refuses every later build. fish ships most completions itself.
+      generateCompletions = false;
     };
     programs.starship = {
       enable = true;
