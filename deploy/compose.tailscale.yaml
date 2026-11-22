@@ -1,0 +1,16 @@
+# The overlay for a box that joins a tailnet (docs/design.md, Tailscale): the
+# tunnel device, the capability to configure it, and the key the box joins
+# with, as /run/secrets/denbox_tailscale_authkey. The file may be empty; the
+# box then waits for `tailscale login` by hand.
+#
+#   DENBOX_TAILSCALE_AUTHKEY_FILE=... docker compose \
+#     -f deploy/compose.yaml -f deploy/compose.tailscale.yaml up -d
+services:
+  box:
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add: [NET_ADMIN]
+    secrets: [denbox_tailscale_authkey]
+secrets:
+  denbox_tailscale_authkey:
+    file: ${DENBOX_TAILSCALE_AUTHKEY_FILE:?Set DENBOX_TAILSCALE_AUTHKEY_FILE to the Tailscale auth key file, empty to log in by hand}
