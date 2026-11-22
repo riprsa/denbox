@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Denbox",
-  "description": "Runs the browser parts of a denbox box.",
-  "version": "1.0",
+  "description": "Shows a denbox box and runs browser parts from Git sources.",
+  "version": "2.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnHNtHXl8oNXtV/4RCLucV8fFXU5KzArm3JHd6c561ieiXTgWgPRaLPcytStJn6KvJ9U/j5Yhh2z9voY5AtcfQxqfrkCPPHgqvMrLyirgFHR9clsBk6+sB+HrLbD1A7YKt82UCeTFUultN+zdzCyTiH8shZrMHJ3wWj8evuoJSJMI1JC7cSiO1v7YjnLGWWrvn6LWLoo0avAcfFneMJ77Nn9AyP258n65rVW39Wn64BOsOO09MWaOYdsM2ED0xc9OmM3AIVZ95xcXYlmYCE1mJsSKG9vQhhmL47zmV6fb58fJRO3fl03sybhWBTCbrns5LSFdGrdrI8u6XeSQjpJ5zwIDAQAB",
   "permissions": [
     "tabs", "tabCapture", "nativeMessaging", "alarms", "storage", "unlimitedStorage",

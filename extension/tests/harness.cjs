@@ -16,7 +16,8 @@ function event() {
 }
 
 // `storage` seeds chrome.storage.local. `respond(url, init)` answers fetch with
-// { status, body }; every call lands in `requests`.
+// { status, body, url? }, `url` being where a redirect landed; every call lands
+// in `requests`.
 function loadBackground({ storage = {}, respond = () => ({ status: 404, body: "" }) } = {}) {
   const store = { ...storage };
   const requests = [];
@@ -61,9 +62,10 @@ function loadBackground({ storage = {}, respond = () => ({ status: 404, body: ""
   };
   const fetch = async (url, init = {}) => {
     requests.push({ url, init });
-    const { status = 200, body = "" } = await respond(url, init);
+    const { status = 200, body = "", url: landed = url } = await respond(url, init);
     return {
       status,
+      url: landed,
       ok: status >= 200 && status < 300,
       text: async () => body,
       json: async () => JSON.parse(body),

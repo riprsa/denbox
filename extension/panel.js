@@ -1,11 +1,17 @@
-// The box panel: memory, CPU and traffic, the supervised services with restart
-// and on/off for optional ones, and the listening ports. It reads GET /state
-// every few seconds while the page is visible and stops while it is hidden.
-// Runs as page code of the extension: `denbox.api` calls the box API.
+// The box panel, a page of the extension: memory, CPU and traffic, the
+// supervised services with restart and on/off for optional ones, and the
+// listening ports. It reads GET /state of the box address every few seconds
+// while the page is visible and stops while it is hidden.
+//
+// Everything the box answers is data that someone else may have written. It
+// reaches the page only as text nodes, textContent and numbers: no markup, no
+// href, src or style, no code. tests/panel.test.cjs holds it to that.
 const INTERVAL = 3000;
 const $ = (id) => document.getElementById(id);
+let api = null;
 
-// el("td", { className: "num" }, "text", child) builds an element.
+// el("td", { className: "num" }, "text", child) builds an element. `props`
+// are always literals of this file; children that are not nodes become text.
 function el(tag, props = {}, ...children) {
   const node = Object.assign(document.createElement(tag), props);
   node.append(...children.filter((child) => child !== null && child !== undefined));
@@ -34,7 +40,7 @@ function duration(seconds) {
   const first = parts.findIndex(([count]) => count > 0);
   return first < 0 ? "0s" : parts.slice(first, first + 2).map(([count, unit]) => `${count}${unit}`).join(" ");
 }
-const bar = (fraction) => el("span", { className: "bar" }, el("i", { style: `width:${Math.min(100, Math.max(0, fraction * 100)).toFixed(1)}%` }));
+const bar = (fraction) => el("meter", { min: 0, max: 1, value: Number(fraction) });
 
 // A section reported as { state: "unavailable", reason } shows the reason in place.
 const unavailable = (section) => section && !Array.isArray(section) && section.state === "unavailable";
@@ -52,7 +58,7 @@ function showSystem(system) {
         "Memory",
         el("td", { className: "num" }, `${bytes(memory.usedBytes)}${limit === null ? "" : ` / ${bytes(limit)}`}`),
         el("td", { className: "wide" }, limit === null ? null : bar(memory.usedBytes / limit), " ",
-          el("span", { className: "dim" }, `anon ${bytes(memory.anonBytes)}, file ${bytes(memory.fileBytes)}`)),
+          el("span", { className: "muted" }, `anon ${bytes(memory.anonBytes)}, file ${bytes(memory.fileBytes)}`)),
       ),
       row(
         "CPU",
@@ -62,7 +68,7 @@ function showSystem(system) {
       row(
         "Traffic",
         el("td", { className: "num" }, `in ${rate(network.rxBytesPerSecond)}, out ${rate(network.txBytesPerSecond)}`),
-        el("td", { className: "wide dim" }, `total in ${bytes(network.rxBytes)}, out ${bytes(network.txBytes)}`),
+        el("td", { className: "wide muted" }, `total in ${bytes(network.rxBytes)}, out ${bytes(network.txBytes)}`),
       ),
       row("Uptime", el("td", { className: "num" }, duration(system.uptimeSeconds)), el("td", { className: "wide" })),
     ),
@@ -77,12 +83,12 @@ async function act(name, path, body) {
   busy.add(name);
   render();
   try {
-    const reply = await denbox.api(path, body);
-    $("services-note").className = "dim";
+    const reply = await api(path, body);
+    $("services-note").className = "muted";
     $("services-note").textContent = reply?.restarting ? `restarting ${reply.restarting.join(", ")}` : "";
   } catch (error) {
     $("services-note").className = "bad";
-    $("services-note").textContent = `${name}: ${error instanceof Error ? error.message : error}`;
+    $("services-note").textContent = `${name}: ${message(error)}`;
   } finally {
     busy.delete(name);
     void refresh();
@@ -108,7 +114,7 @@ function showServices(services) {
         }
         return row(
           service.name,
-          el("td", { className: off ? "dim" : service.up ? "" : "down" }, state),
+          el("td", { className: off ? "muted" : service.up ? "" : "down" }, state),
           el("td", {}, restart),
           el("td", { className: "wide" }, toggle),
         );
@@ -124,18 +130,28 @@ function showPorts(ports) {
       "table",
       {},
       ...ports.map((port) =>
-        row(el("td", { className: "num" }, String(port.port)), port.address, el("td", { className: "wide" + (port.process ? "" : " dim") }, port.process ?? "-")),
+        row(el("td", { className: "num" }, String(port.port)), port.address, el("td", { className: "wide" + (port.process ? "" : " muted") }, port.process ?? "-")),
       ),
     ),
   );
 }
 
 let state = null;
+
+// Shows each section; one whose data has an unexpected shape says so in place.
 function render() {
   if (!state) return;
-  showSystem(state.system);
-  showServices(state.services);
-  showPorts(state.ports);
+  for (const [id, show, value] of [
+    ["system", showSystem, state.system],
+    ["services", showServices, state.services],
+    ["ports", showPorts, state.ports],
+  ]) {
+    try {
+      show(value);
+    } catch (error) {
+      $(id).replaceChildren(el("span", { className: "bad" }, `Unexpected data: ${message(error)}`));
+    }
+  }
 }
 
 let timer = null;
@@ -148,10 +164,10 @@ async function refresh() {
   timer = null;
   loading = true;
   try {
-    state = await denbox.api("/state");
+    state = await api("/state");
     $("error").hidden = true;
   } catch (error) {
-    $("error").textContent = `Box API: ${error instanceof Error ? error.message : error}`;
+    $("error").textContent = `Box API: ${message(error)}`;
     $("error").hidden = false;
   } finally {
     loading = false;
@@ -160,12 +176,23 @@ async function refresh() {
   if (document.visibilityState === "visible") timer = setTimeout(refresh, INTERVAL);
 }
 
-$("restart-all").addEventListener("click", () => act("all", "/services/restart", { name: "all" }));
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") void refresh();
-  else {
-    clearTimeout(timer);
-    timer = null;
+// Reads the box address and shows the first state; the tests wait for it.
+async function start() {
+  const address = (await chrome.storage.local.get("denbox:address"))["denbox:address"];
+  if (!address) {
+    $("error").textContent = "No box address. Set one in the extension's settings.";
+    $("error").hidden = false;
+    return;
   }
-});
-void refresh();
+  api = boxApi(address);
+  $("restart-all").addEventListener("click", () => act("all", "/services/restart", { name: "all" }));
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void refresh();
+    else {
+      clearTimeout(timer);
+      timer = null;
+    }
+  });
+  await refresh();
+}
+const ready = start();

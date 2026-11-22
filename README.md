@@ -8,7 +8,8 @@ Today a box runs as a Docker container.
 - `kit/`: the Home Manager modules, `denbox-api`, the `denbox` runtime.
 - `image/`: the container image, with Nix and a seed of the runtime.
 - `template/`: an environment to start from.
-- `extension/`: a browser extension that shows the box's state.
+- `extension/`: a browser extension that shows the box's state and runs
+  browser parts from Git sources.
 
 ## Quick start
 
@@ -28,9 +29,10 @@ Today a box runs as a Docker container.
    `cd denbox-<box> && docker compose logs -f box`. Run the installer again
    with the same `--dir` to update the image. `bash install.sh --help` and
    the top of the script list the options for unattended use.
-3. **The extension.** Load `extension/` unpacked and set its address to the
-   box's API, `http://127.0.0.1:48099` on the Docker host. See
-   [extension/README.md](extension/README.md).
+3. **The extension.** Load `extension/` unpacked and set its box address to
+   the box's API, `http://127.0.0.1:48099` on the Docker host. The box only
+   supplies data; code the extension runs comes from sources on a protected
+   Git branch. See [extension/README.md](extension/README.md).
 
 T3 Code listens on `127.0.0.1:3773` of the host.
 

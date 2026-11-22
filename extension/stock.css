@@ -1,5 +1,5 @@
-/* The look of the extension's own pages. page.html loads it too, so a part's
-   page starts from it and may restyle anything. */
+/* The look of the extension's own pages, the panel among them. page.html
+   loads it too, so a part's page starts from it and may restyle anything. */
 :root { color-scheme: dark; --text: #fff; --muted: #9a9a9a; --line: #262626; --bad: #ff6b6b; }
 body { margin: 0; padding: 12px 16px; background: #000; color: var(--text);
   font: 12px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
