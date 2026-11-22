@@ -1,5 +1,6 @@
 # denbox-api, the box's state behind the browser panel, as the supervised
-# service denbox-api. It also serves the bundle of denbox.browser.parts.
+# service denbox-api. It also serves the bundle of denbox.browser.parts, to
+# which it adds the kit's own part, panel.
 { config, lib, pkgs, ... }:
 let
   cfg = config.denbox;
@@ -29,6 +30,11 @@ in
 
   # denbox-api calls `denbox service`, found on the box's PATH.
   config = lib.mkIf cfg.api.enable {
+    # The page that shows what denbox-api reports; every box with the API has it.
+    denbox.browser.parts.panel.pages.panel = {
+      html = ../../browser/panel/panel.html;
+      js = ../../browser/panel/panel.js;
+    };
     denbox.services.denbox-api = pkgs.writeShellScript "denbox-api-service" ''
       export PATH=${lib.makeBinPath [ pkgs.iproute2 pkgs.coreutils ]}:$PATH
       export DENBOX_API_ADDRESS=${lib.escapeShellArg cfg.api.address}
