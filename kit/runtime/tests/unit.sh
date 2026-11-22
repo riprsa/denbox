@@ -11,9 +11,21 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 denbox=$here/../denbox
 tmp=$(mktemp -d)
 supervisor=''
+# cleanup: stops the supervisor and whatever it started. It asks s6 to stop,
+# waits ten seconds at most, then kills every process still working under
+# the scan directory, so a failed test cannot keep the run alive.
 cleanup() {
+  local attempt process
   if [[ -n $supervisor ]]; then
     s6-svscanctl -t "$DENBOX_RUN/services" 2>/dev/null || kill "$supervisor" 2>/dev/null || true
+    for ((attempt = 0; attempt < 50; attempt++)); do
+      kill -0 "$supervisor" 2>/dev/null || break
+      sleep .2
+    done
+    for process in /proc/[0-9]*; do
+      [[ $(readlink "$process/cwd" 2>/dev/null) == "$DENBOX_RUN"/services* ]] || continue
+      kill -KILL "${process#/proc/}" 2>/dev/null || true
+    done
     wait "$supervisor" 2>/dev/null || true
   fi
   rm -rf "$tmp"
@@ -126,7 +138,20 @@ git config --file "$HOME/.gitconfig" url."file:///nonexistent/".insteadOf "file:
 count() { if [[ -f $1 ]]; then wc -l < "$1"; else echo 0; fi; }
 builds() { grep -c '^build .*path:' "$FAKE/calls" || true; }
 evaluations() { grep -c '^eval .*path:' "$FAKE/calls" || true; }
-fail() { echo "FAIL: $*" >&2; exit 1; }
+# fail MESSAGE: ends the run, showing what the supervisor and its services
+# were doing, which is what a failure that comes and goes needs.
+fail() {
+  echo "FAIL: $*" >&2
+  {
+    echo '--- services'
+    timeout 10 "$denbox" service status || true
+    echo '--- supervisor'
+    tail -n 30 "$tmp/supervise.log" || true
+    echo '--- sync loop'
+    tail -n 20 "$DENBOX_STATE/logs/denbox-sync/current" || true
+  } >&2 2>&1
+  exit 1
+}
 wait_for() {
   for ((attempt = 0; attempt < 100; attempt++)); do
     if eval "$1"; then return 0; fi
