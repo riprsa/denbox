@@ -1,0 +1,15 @@
+/* The look of the extension's own pages. page.html loads it too, so a part's
+   page starts from it and may restyle anything. */
+:root { color-scheme: dark; --text: #fff; --muted: #9a9a9a; --line: #262626; --bad: #ff6b6b; }
+body { margin: 0; padding: 12px 16px; background: #000; color: var(--text);
+  font: 12px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2 { margin: 0; font: inherit; font-weight: 600; }
+button { padding: 2px 8px; background: #000; color: inherit; border: 1px solid var(--line); font: inherit; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button:disabled { color: var(--muted); cursor: default; }
+input { box-sizing: border-box; width: 100%; padding: 4px 6px; background: #000; color: inherit;
+  border: 1px solid var(--line); font: inherit; outline: none; }
+input:focus { border-color: var(--muted); }
+a { color: inherit; }
+.muted { color: var(--muted); }
+.bad { color: var(--bad); }
