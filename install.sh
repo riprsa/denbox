@@ -4,11 +4,18 @@
 #
 #   bash install.sh [--repository URL] [--ref REF] [--box BOX] [--name NAME]
 #                   [--dir DIR] [--image IMAGE] [--token-file FILE]
+#                   [--tailscale] [--tailscale-authkey-file FILE]
 #
 # Each option is also read from a variable: DENBOX_REPOSITORY, DENBOX_REF,
 # DENBOX_BOX, DENBOX_NAME, DENBOX_DIR, DENBOX_IMAGE, DENBOX_GIT_TOKEN_FILE,
 # and DENBOX_GIT_TOKEN for the token itself. What is missing is asked on the
 # terminal; the token only when the repository is not readable without one.
+#
+# --tailscale (DENBOX_TAILSCALE=1) adds compose.tailscale.yaml for a box that
+# joins a tailnet: the tunnel device and the key it joins with. The key comes
+# from --tailscale-authkey-file (DENBOX_TAILSCALE_AUTHKEY_FILE), from
+# DENBOX_TAILSCALE_AUTHKEY, or is asked; giving one implies --tailscale. An
+# empty key leaves the login to `tailscale login` in the box.
 # NAME (default BOX) names the Compose project denbox-NAME and its volumes;
 # DIR defaults to ./denbox-NAME. DENBOX_BIND_IP, DENBOX_T3_PORT,
 # DENBOX_API_PORT, DENBOX_CPUS, DENBOX_MEMORY and DENBOX_PIDS go to Compose.
@@ -26,7 +33,9 @@ usage() { sed -n '2,/^[^#]/s/^# \{0,1\}//p' "$0" >&2; exit 64; }
 settings=(DENBOX_BIND_IP DENBOX_T3_PORT DENBOX_API_PORT DENBOX_CPUS DENBOX_MEMORY DENBOX_PIDS)
 repository=${DENBOX_REPOSITORY:-} ref=${DENBOX_REF:-} box=${DENBOX_BOX:-} name=${DENBOX_NAME:-}
 dir=${DENBOX_DIR:-} image=${DENBOX_IMAGE:-} token_file=${DENBOX_GIT_TOKEN_FILE:-}
+tailscale=${DENBOX_TAILSCALE:-} key_file=${DENBOX_TAILSCALE_AUTHKEY_FILE:-}
 while (($#)); do
+  if [[ $1 == --tailscale ]]; then tailscale=1; shift; continue; fi
   [[ $# -ge 2 ]] || usage
   case $1 in
     --repository) repository=$2 ;;
@@ -36,6 +45,7 @@ while (($#)); do
     --dir) dir=$2 ;;
     --image) image=$2 ;;
     --token-file) token_file=$2 ;;
+    --tailscale-authkey-file) key_file=$2 ;;
     *) usage ;;
   esac
   shift 2
@@ -64,6 +74,18 @@ unset DENBOX_GIT_TOKEN
 token_given=false
 [[ ! -f $token ]] || token_given=true
 
+# The Tailscale key, the same way.
+key=$temporary/tailscale_authkey
+if [[ -n ${DENBOX_TAILSCALE_AUTHKEY:-} ]]; then
+  printf '%s\n' "$DENBOX_TAILSCALE_AUTHKEY" > "$key"
+elif [[ -n $key_file ]]; then
+  [[ -r $key_file ]] || fail "Cannot read the Tailscale key file $key_file"
+  cat "$key_file" > "$key"
+fi
+unset DENBOX_TAILSCALE_AUTHKEY
+[[ ! -f $key ]] || tailscale=1
+[[ -z $tailscale || $tailscale == 1 ]] || fail 'DENBOX_TAILSCALE is 1 or empty'
+
 command -v docker > /dev/null || fail 'Docker is not installed'
 docker compose version > /dev/null 2>&1 || fail 'Docker Compose is not installed'
 
@@ -78,6 +100,7 @@ load_saved() {
       DENBOX_BOX) box=${box:-$value} ;;
       DENBOX_NAME) name=${name:-$value} ;;
       DENBOX_IMAGE) image=${image:-$value} ;;
+      DENBOX_TAILSCALE) tailscale=${tailscale:-$value} ;;
       DENBOX_*) [[ " ${settings[*]} " != *" $key "* ]] || printf -v "$key" '%s' "${!key:-$value}" ;;
     esac
   done < "$1"
@@ -109,6 +132,21 @@ ask_token() {
   printf '\n' > /dev/tty
   [[ -n $answer ]] || fail 'No token given'
   printf '%s\n' "$answer" > "$token"
+}
+
+# ask_key: reads the Tailscale key from the terminal without echo; without
+# a terminal, or with an empty answer, the box waits for a login by hand.
+ask_key() {
+  local answer=''
+  if terminal; then
+    tty_state=$(stty -g < /dev/tty)
+    stty -echo < /dev/tty
+    IFS= read -r -p 'Tailscale auth key (empty to log in by hand in the box): ' answer < /dev/tty || true
+    stty "$tty_state" < /dev/tty
+    printf '\n' > /dev/tty
+  fi
+  [[ -n $answer ]] || echo 'No Tailscale key; log in with "tailscale login" in the box' >&2
+  printf '%s\n' "$answer" > "$key"
 }
 
 # Earlier settings are in DIR when it is given, in ./denbox-NAME when a
@@ -169,16 +207,27 @@ if [[ $token_given == true ]]; then
   if ((status == 2)); then fail "$repository has no branch $ref"; fi
   ((status == 0)) || fail "Cannot read $repository with that token"
 fi
+# An update keeps the key it saved; only a new installation asks.
+if [[ -n $tailscale && ! -f $key ]]; then
+  if [[ -f $dir/tailscale_authkey ]]; then cp "$dir/tailscale_authkey" "$key"; else ask_key; fi
+fi
 
 # The installation: the deployment from the image, the bootstrap and the
 # token as its two secrets, and the settings for Compose and for the next run.
-docker run --rm --name "denbox-$name-compose" --entrypoint cat "$image" /usr/local/share/denbox/compose.yaml \
-  > "$temporary/compose.yaml"
+files=(compose.yaml)
+[[ -z $tailscale ]] || files+=(compose.tailscale.yaml)
+for file in "${files[@]}"; do
+  docker run --rm --name "denbox-$name-compose" --entrypoint cat "$image" "/usr/local/share/denbox/$file" \
+    > "$temporary/$file"
+done
 printf '{"version": 2, "repository": "%s", "ref": "%s", "box": "%s"}\n' "$repository" "$ref" "$box" \
   > "$temporary/bootstrap.json"
 {
   printf '%s=%s\n' DENBOX_NAME "$name" DENBOX_IMAGE "$image" DENBOX_REPOSITORY "$repository" \
     DENBOX_REF "$ref" DENBOX_BOX "$box" DENBOX_BOOTSTRAP_FILE ./bootstrap.json DENBOX_GIT_TOKEN_FILE ./git_token
+  # COMPOSE_FILE keeps the overlay in Compose commands run by hand in DIR.
+  [[ -z $tailscale ]] || printf '%s=%s\n' DENBOX_TAILSCALE 1 DENBOX_TAILSCALE_AUTHKEY_FILE ./tailscale_authkey \
+    COMPOSE_FILE compose.yaml:compose.tailscale.yaml
   for setting in "${settings[@]}"; do
     [[ -z ${!setting:-} ]] || printf '%s=%s\n' "$setting" "${!setting}"
   done
@@ -186,10 +235,14 @@ printf '{"version": 2, "repository": "%s", "ref": "%s", "box": "%s"}\n' "$reposi
 mkdir -p "$dir"
 chmod 0700 "$dir"
 dir=$(cd "$dir" && pwd -P)
-for file in compose.yaml bootstrap.json .env; do mv -f "$temporary/$file" "$dir/$file"; done
+for file in "${files[@]}" bootstrap.json .env; do mv -f "$temporary/$file" "$dir/$file"; done
 mv -f "$token" "$dir/git_token"
 chmod 0600 "$dir/bootstrap.json" "$dir/git_token" "$dir/.env"
-chmod 0644 "$dir/compose.yaml"
+if [[ -n $tailscale ]]; then
+  mv -f "$key" "$dir/tailscale_authkey"
+  chmod 0600 "$dir/tailscale_authkey"
+fi
+chmod 0644 "${files[@]/#/$dir/}"
 
 for volume in "denbox-$name-home" "denbox-$name-nix"; do
   docker volume inspect "$volume" > /dev/null 2>&1 || docker volume create "$volume" > /dev/null
@@ -197,7 +250,9 @@ done
 
 # Compose reads only the saved settings, not this shell's.
 unset "${!DENBOX_@}" COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_PROFILES
-docker compose --project-directory "$dir" -f "$dir/compose.yaml" up -d --force-recreate --pull never
+compose=()
+for file in "${files[@]}"; do compose+=(-f "$dir/$file"); done
+docker compose --project-directory "$dir" "${compose[@]}" up -d --force-recreate --pull never
 
 cat <<EOF
 

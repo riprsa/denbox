@@ -43,6 +43,32 @@ The kit's own packages come prebuilt from the binary cache
 its vendor. Set `DENBOX_BINARY_CACHE=0` in the box's environment to build them
 locally instead. See [Binary cache](docs/design.md#binary-cache).
 
+## A box in a tailnet
+
+By default a box shares its host's place in the network: it is reached
+through ports the host publishes, and whatever it sends leaves as the host,
+so an agent in the box reaches everything the host reaches. With
+`denbox.tailscale.enable` the box is a Tailscale node of its own, with its own
+name, address and entry in the tailnet's access rules, and
+`denbox.tailscale.serve` publishes its ports to the tailnet with the
+tailnet's certificate instead of through the host.
+
+- **The host** grants the tunnel device and the key:
+  `bash install.sh --tailscale` adds
+  [deploy/compose.tailscale.yaml](deploy/compose.tailscale.yaml) and asks for
+  an auth key without echo (or reads `--tailscale-authkey-file`). The key is
+  used once, at the first start; leave it empty to run `tailscale login` in
+  the box instead. A host that grants no device runs the box with
+  `denbox.tailscale.userspace = true`.
+- **Tag the node and restrict it.** Ask for a tag such as `tag:denbox` in
+  `denbox.tailscale.tags`, create the key for that tag, and give the tag
+  only the access a box needs in the tailnet's rules. A box in a tailnet
+  without rules for it reaches the whole tailnet, which only moves the
+  problem.
+
+See the commented example in [template/flake.nix](template/flake.nix) and
+the section Tailscale of [docs/design.md](docs/design.md).
+
 ## More
 
 - [docs/design.md](docs/design.md): the contracts between the parts, every
