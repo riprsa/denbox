@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 530" width="1000" height="530" role="img" aria-label="denbox: a flake in your repository describes a box; on every push the box fetches it, builds it and activates it">
+  <style>
+    text { fill: #fff; font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 14px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; }
+    .g { fill: #9da5ae; }
+    .v { fill: #56d364; }
+    .cap { fill: #9da5ae; font-size: 11.5px; font-weight: 600; letter-spacing: .12em; }
+    .name { font-size: 26px; font-weight: 700; letter-spacing: -.01em; }
+    .tag { fill: #9da5ae; font-size: 15px; }
+    .step { font-size: 14px; text-anchor: middle; }
+    .wire { fill: none; stroke: #3d444d; stroke-width: 1.5; }
+    .edge { fill: none; stroke: #fff; stroke-width: 1.5; }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" fill="#3d444d"/></marker>
+  </defs>
+  <rect width="1000" height="530" fill="#000"/>
+  <text x="40" y="62" class="name">denbox</text>
+  <text x="40" y="88" class="tag">Declarative config for a container that rebuilds itself on every push.</text>
+  <text x="40" y="130" class="cap">YOUR REPOSITORY</text>
+  <text x="40" y="160" class="mono g">boxes.dev = {</text>
+  <text x="58" y="196" class="mono">denbox.t3.enable <tspan class="g">=</tspan> <tspan class="v">true</tspan><tspan class="g">;</tspan></text>
+  <text x="58" y="240" class="mono">denbox.agents.claude.enable <tspan class="g">=</tspan> <tspan class="v">true</tspan><tspan class="g">;</tspan></text>
+  <text x="58" y="284" class="mono">denbox.services.my-app <tspan class="g">=</tspan> <tspan class="v">./run.sh</tspan><tspan class="g">;</tspan></text>
+  <text x="58" y="328" class="mono">home.packages <tspan class="g">=</tspan> <tspan class="v">[ pkgs.php ]</tspan><tspan class="g">;</tspan></text>
+  <text x="40" y="364" class="mono g">};</text>
+  <rect x="660" y="146" width="300" height="232" class="edge"/>
+  <text x="660" y="130" class="cap">THE BOX, A CONTAINER</text>
+  <circle cx="690" cy="191" r="4.5" fill="#56d364"/>
+  <text x="706" y="196" class="mono">t3</text>
+  <text x="706" y="213" class="g" style="font-size:12px">T3 Code, supervised</text>
+  <circle cx="690" cy="235" r="4.5" fill="#56d364"/>
+  <text x="706" y="240" class="mono">claude</text>
+  <text x="706" y="257" class="g" style="font-size:12px">Claude Code on PATH</text>
+  <circle cx="690" cy="279" r="4.5" fill="#56d364"/>
+  <text x="706" y="284" class="mono">my-app</text>
+  <text x="706" y="301" class="g" style="font-size:12px">your service, supervised</text>
+  <circle cx="690" cy="323" r="4.5" fill="#56d364"/>
+  <text x="706" y="328" class="mono">php</text>
+  <text x="706" y="345" class="g" style="font-size:12px">any package from nixpkgs</text>
+  <path d="M289 191 H348 C404 191, 388 257.0, 444 257.0" class="wire"/>
+  <path d="M556 257.0 C600 257.0, 592 191, 652 191" class="wire" marker-end="url(#tip)"/>
+  <path d="M388 235 H388 C404 235, 388 257.0, 444 257.0" class="wire"/>
+  <path d="M556 257.0 C600 257.0, 592 235, 652 235" class="wire" marker-end="url(#tip)"/>
+  <path d="M379 279 H379 C404 279, 388 257.0, 444 257.0" class="wire"/>
+  <path d="M556 257.0 C600 257.0, 592 279, 652 279" class="wire" marker-end="url(#tip)"/>
+  <path d="M334 323 H348 C404 323, 388 257.0, 444 257.0" class="wire"/>
+  <path d="M556 257.0 C600 257.0, 592 323, 652 323" class="wire" marker-end="url(#tip)"/>
+  <circle cx="500" cy="257.0" r="56" fill="#000" stroke="#fff" stroke-width="1.5"/>
+  <text x="500" y="242.0" class="step">fetch</text>
+  <text x="500" y="262.0" class="step">build</text>
+  <text x="500" y="282.0" class="step">activate</text>
+  <text x="500" y="167.0" class="cap" text-anchor="middle">ON EVERY PUSH</text>
+  <text x="500" y="185.0" class="g" text-anchor="middle" style="font-size:12px">the box checks every 5 minutes</text>
+  <path d="M500 313.0 V402 M300 424 V402 H700 V424 M500 402 V424" class="wire"/>
+  <text x="300" y="390" class="cap">BUILT FROM</text>
+  <text x="300" y="446" class="mono" text-anchor="middle">image</text>
+  <text x="300" y="465" class="g" text-anchor="middle" style="font-size:12px">Debian, Nix, git</text>
+  <text x="500" y="446" class="mono" text-anchor="middle">kit</text>
+  <text x="500" y="465" class="g" text-anchor="middle" style="font-size:12px">modules, runtime, pinned agents</text>
+  <text x="700" y="446" class="mono" text-anchor="middle">nixpkgs cache</text>
+  <text x="700" y="465" class="g" text-anchor="middle" style="font-size:12px">prebuilt packages</text>
+  <text x="40" y="502" class="g" style="font-size:12.5px">A failed build or activation leaves the box as it was.</text>
+</svg>
