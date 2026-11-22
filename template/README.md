@@ -20,4 +20,19 @@ there is commented; the full list is in denbox's `docs/design.md`.
    `main`. It shows what the box asks of the host (`denbox.host`: ports,
    limits, devices, secrets) and starts it once you accept. The box syncs to
    every new commit on its own; a commit that changes what it asks of the
-   host takes effect when you run `install.sh` again and accept it.
+   host takes effect when you run `install.sh` again and accept it. On a machine without a
+   container, use `install-host.sh` instead.
+
+## A box that does not run as root
+
+A box runs as root with home `/root` unless it says otherwise. On a machine,
+`install-host.sh` runs the box as the user it names and creates that user
+when it is missing, so set both in the box's module:
+
+```nix
+home.username = "alice";
+home.homeDirectory = "/home/alice";
+```
+
+An existing user must have that home in `/etc/passwd` and a primary group of
+its own. In a container the box keeps running as root.

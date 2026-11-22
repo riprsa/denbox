@@ -1,7 +1,7 @@
 # Denbox design
 
-A box is a Linux workspace built from a flake: a container on a Docker host
-today, a VPS or an Incus instance later. One box can hold coding agents and
+A box is a Linux workspace built from a flake: a container on a Docker host,
+or a user on a Linux machine with systemd. One box can hold coding agents and
 T3 Code, another only command-line tools. Both are the same mechanism with
 different options switched on.
 
@@ -137,15 +137,15 @@ The kit knows nothing about a particular proxy, vault or cluster.
 | `~/.local/state/denbox/` | runtime state: fetched sources, the applied revision, `status` |
 | `~/.local/state/denbox/optional-services/NAME` | marker of a switched-on optional service |
 | `~/.local/state/denbox/logs/NAME/current` | a service's log, 10 x 1 MB |
-| `/run/denbox/` | s6 scan directory (`services/`) and locks; gone on restart, and may be `noexec` |
-| `/run/secrets/denbox_bootstrap`, `/run/secrets/denbox_git_token` | the bootstrap, mounted by the host |
+| `/run/denbox/` | s6 scan directory (`services/`) and locks; gone on restart, and may be `noexec`. `/run/denbox-USER/` for a box whose user is not root |
+| `/run/secrets/denbox_bootstrap`, `/run/secrets/denbox_git_token` | the bootstrap, mounted by the host; a machine passes other paths (see Hosts) |
 | `/run/secrets/denbox_NAME` | a secret the box declares in `denbox.host.secrets.NAME`, by default |
 | `/run/secrets/denbox_tailscale_authkey` | the key a box joins its tailnet with, the Tailscale module's secret `tailscale_authkey` |
 | `~/.local/state/denbox/tailscale/` | the node's identity in the tailnet; it survives restarts with the home |
 
 One command, `denbox`, replaces the set of commands the predecessor had:
 
-    denbox supervise                      PID 1 after tini: s6 over the services and the sync loop; refused while one runs
+    denbox supervise                      s6 over the services and the sync loop, under tini or systemd; refused while one runs
     denbox sync [--once]                  fetch, build, activate, reconcile services
     denbox host                           print boxes.<box>.host of the bootstrap's environment, followed as a sync does; builds nothing
     denbox service status [NAME]
@@ -470,8 +470,9 @@ A box needs Linux, Nix and something that runs `denbox supervise` at start.
 - **Baked image**, for short-lived boxes: the same image with one box already
   built into its store, made by the environment's CI. It starts without a
   build and without volumes.
-- **VPS and Incus**, later: a NixOS module that runs `denbox supervise` as a
-  unit.
+- **A machine**: a Debian or Ubuntu machine with systemd, a VPS for
+  example, without a container. See below.
+- **Incus**, later.
 
 `install.sh` installs or updates one box on Docker or Podman; it needs bash
 and the container runtime, and runs everything else in throwaway containers
@@ -520,6 +521,52 @@ A key already given stays where the box finds it if it is moved into the
 secrets directory: `mkdir -p DIR/secrets && mv DIR/tailscale_authkey
 DIR/secrets/`. `compose.tailscale.yaml` in the directory can be deleted.
 
+### A machine
+
+On a machine a box is one user: it manages that user's home and the
+services that run as that user. It does not manage the system (kernel,
+firewall, system packages, other users), and it is not isolated from the
+machine: its agents can do whatever that user can.
+
+`install-host.sh`, run as root, takes the same answers as `install.sh` and:
+
+1. installs Nix with its daemon when Nix is missing, the same pinned release
+   as the image. Multi-user Nix lets a box that is not root build, root and
+   collect the store through the daemon, with the sandbox on, and needs
+   none of the container's settings (`sandbox = false`, no build users). A
+   Nix without its daemon is refused. It adds
+   `extra-trusted-substituters` and `extra-trusted-public-keys` for the
+   kit's binary cache to the daemon's `nix.conf`, so that the daemon takes
+   them from the box's user; no other user gets the cache;
+2. builds the seed runtime from this repository's default branch, or from
+   the flake `--seed` names (a revision, a local checkout), rooted at
+   `/nix/var/nix/gcroots/denbox-seed`. The seed runs only until the first
+   activation installs the runtime the box's own lock names;
+3. reads `boxes.<box>.config.home.username` and `.homeDirectory` and creates
+   that user with that home when it is missing. The box says who it runs as;
+   one user runs one box;
+4. writes the bootstrap and the token, the unit `denbox-NAME.service` and the
+   launcher `/usr/local/bin/denbox`, and restarts the unit.
+
+Run again with the same name, it rewrites these files with the settings it
+saved, rebuilds the seed and restarts the box. It never creates, changes or
+deletes anything in the home.
+
+| Path | Holds |
+| --- | --- |
+| `/etc/denbox/NAME/bootstrap.json`, `git_token` | the bootstrap, `root:GROUP` `0640` in a `0750` directory: root and the box's user read them, only root writes them |
+| `/etc/denbox/NAME/settings` | what the installer reuses when run again, root only |
+| `/etc/systemd/system/denbox-NAME.service` | runs `denbox supervise` as the user, restarts it always |
+| `/usr/local/bin/denbox` | the image's launcher: the user's profile copy, the seed before it |
+| `/run/denbox-USER/` (`/run/denbox/` for root) | the unit's `RuntimeDirectory`, empty at every start |
+
+The unit sets `DENBOX_BOOTSTRAP`, `DENBOX_GIT_TOKEN` and `DENBOX_RUN`, and a
+`PATH` with the user's profile and Nix first. The runtime finds the same run
+directory by its user, so `denbox service ...` and `denbox shell` work in the
+user's login shell. A `denbox sync --once` there needs the unit's two
+bootstrap variables. The service logs go to the journal as well:
+`journalctl -u denbox-NAME`.
+
 ## Repository
 
 ```
@@ -532,6 +579,7 @@ kit/runtime/              the denbox command
 extension/                the browser extension, the panel included
 image/                    Dockerfile, the denbox launcher, root's login shell
 deploy/, install.sh       deploy/render, its tests, the installer
+install-host.sh           installer for a machine with systemd
 template/                 what `nix flake init -t github:riprsa/denbox` writes
 docs/                     this file
 ```

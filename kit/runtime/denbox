@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The runtime of a box. See docs/design.md, "Layout in a box" and "Sync".
 #
-#   denbox supervise                       PID 1 after tini: s6 over the services and the sync loop
+#   denbox supervise                       s6 over the services and the sync loop, under tini or systemd
 #   denbox sync [--once]                   fetch, build, activate, reconcile services
 #   denbox host                            print what the box asks of its host, as JSON
 #   denbox service status [NAME]
@@ -21,7 +21,10 @@ user_path=$PATH
 [[ -z $tools ]] || PATH=$tools:$PATH
 
 state=${DENBOX_STATE:-$HOME/.local/state/denbox}
-run=${DENBOX_RUN:-/run/denbox}
+# In a container the box runs as root. On a machine a box may run as any
+# user, so each user has a directory of its own, made by the box's unit.
+if ((EUID == 0)); then run=/run/denbox; else run=/run/denbox-$(id -un); fi
+run=${DENBOX_RUN:-$run}
 config=${DENBOX_CONFIG:-$HOME/.config/denbox}
 bootstrap_file=${DENBOX_BOOTSTRAP:-/run/secrets/denbox_bootstrap}
 token_file=${DENBOX_GIT_TOKEN:-/run/secrets/denbox_git_token}
