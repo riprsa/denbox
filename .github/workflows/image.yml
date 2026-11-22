@@ -1,0 +1,47 @@
+# Tests the runtime, builds the image and runs the end-to-end test against
+# it. On main, an image that passed is pushed as latest and as the commit.
+#
+# amd64 only. arm64 would need an arm64 runner (ubuntu-24.04-arm) running the
+# same job, each pushing a per-architecture tag, and a final job joining them
+# with `docker buildx imagetools create`; the Dockerfile already has the
+# arm64 Nix checksum.
+name: image
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends s6 shellcheck
+      - run: shellcheck -x kit/runtime/denbox kit/runtime/askpass kit/runtime/tests/*.sh image/init image/denbox image/denbox-login
+      - run: kit/runtime/tests/unit.sh
+
+  image:
+    needs: runtime
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/riprsa/denbox
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker build -f image/Dockerfile -t "$IMAGE:$GITHUB_SHA" .
+      - run: kit/runtime/tests/e2e.sh "$IMAGE:$GITHUB_SHA"
+      - name: Push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:latest"
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:latest"

@@ -40,33 +40,13 @@ usage() {
   exit 64
 }
 
-# write_file PATH MODE: replaces PATH with stdin, atomically.
-write_file() {
-  local temporary
-  temporary=$(mktemp "$1.XXXXXX")
-  cat > "$temporary"
-  chmod "$2" "$temporary"
-  mv -f "$temporary" "$1"
-}
-
 # supervise: lays out the s6 scan directory, restores the last applied
 # services without network, and becomes s6-svscan.
 supervise() {
-  mkdir -p "$services" "$run/bin" "$state"
+  mkdir -p "$services" "$state"
   chmod 0700 "$run"
-  # The services' entry to the runtime: the box's own copy once activation
-  # installed it, this one before. A runtime update thus reaches every
-  # wrapper without rewriting it.
-  write_file "$run/bin/denbox" 0755 <<SCRIPT
-#!/bin/sh
-if [ -x "$profile_runtime" ]; then exec "$profile_runtime" "\$@"; fi
-exec "$self" "\$@"
-SCRIPT
   service_dir "$sync_service"
-  write_file "$services/$sync_service/command" 0755 <<SCRIPT
-#!/bin/sh
-exec "$run/bin/denbox" sync
-SCRIPT
+  ln -sfn "$self" "$services/$sync_service/command"
   rm -f "$services/$sync_service/down"
   reconcile || echo 'Reconciling the cached services failed; the shell stays available' >&2
   # Services see the caller's PATH first and the runtime's tools after it;
@@ -74,16 +54,16 @@ SCRIPT
   PATH=$user_path${tools:+:$tools} exec s6-svscan "$services"
 }
 
-# service_dir NAME: writes the s6 wrapper files of a service. ./command is
-# the service's own executable; run sends its stderr to the log too.
+# service_dir NAME: links the s6 wrapper files of a service to this script,
+# which acts as each by its name (see the end of this file). Nothing under
+# $run has to be executable, so it may be a noexec tmpfs. ./command is the
+# service's own executable.
 service_dir() {
   local directory=$services/$1
   mkdir -p "$directory/log"
-  printf '#!/bin/sh\nexec 2>&1\nexec ./command\n' | write_file "$directory/run" 0755
-  # Exit code 256 is a stop by signal; a crash waits a little before s6 restarts it.
-  # shellcheck disable=SC2016
-  printf '#!/bin/sh\n[ "$1" = 256 ] || sleep 5\n' | write_file "$directory/finish" 0755
-  printf '#!/bin/sh\nexec "%s" log-writer "%s"\n' "$run/bin/denbox" "$1" | write_file "$directory/log/run" 0755
+  ln -sfn "$self" "$directory/run"
+  ln -sfn "$self" "$directory/finish"
+  ln -sfn "$self" "$directory/log/run"
   printf '30000\n' > "$directory/timeout-kill"
 }
 
@@ -97,7 +77,9 @@ log_writer() {
 }
 
 # reconcile: makes the supervised services match $config/services. A service
-# restarts only when its executable changed.
+# restarts only when its executable changed. The wrapper links of every
+# service are renewed, so they point at the runtime that runs now and not at
+# one the store may collect.
 reconcile() {
   local source=$config/services service name target fingerprint previous running
   mkdir -p "$services"
@@ -129,7 +111,11 @@ reconcile() {
     target=$(readlink -f "$service")
     fingerprint=$target
     previous=$(cat "$services/$name/.managed" 2>/dev/null || true)
-    [[ $fingerprint != "$previous" ]] || continue
+    if [[ $fingerprint == "$previous" ]]; then
+      service_dir "$name"
+      [[ ! -x $target/finish ]] || ln -sfn "$target/finish" "$services/$name/finish"
+      continue
+    fi
     running=false
     if s6-svok "$services/$name" 2>/dev/null; then
       running=true
@@ -145,6 +131,8 @@ reconcile() {
     if [[ $running == true ]]; then s6-svc -u "$services/$name"; fi
   done
   shopt -u nullglob
+  service_dir "$sync_service"
+  ln -sfn "$self" "$services/$sync_service/command"
   if [[ -p $services/.s6-svscan/control ]]; then s6-svscanctl -an "$services"; fi
   exec 7>&-
 }
@@ -370,6 +358,24 @@ shell() {
   exec bash "$@"
 }
 
+# As s6 runs it through the links service_dir makes.
+case ${0##*/} in
+  run)
+    if [[ ${PWD##*/} == log ]]; then log_writer "$(basename "$(dirname "$PWD")")"; fi
+    # s6 sends only stdout to the log.
+    exec 2>&1
+    PATH=$user_path
+    exec ./command ;;
+  # Exit code 256 is a stop by signal; a crash waits a little before s6 restarts it.
+  finish) [[ ${1:-} == 256 ]] || sleep 5; exit 0 ;;
+  # The sync loop: the box's own runtime once activation installed it.
+  command)
+    if [[ -x $profile_runtime && $(readlink -f "$profile_runtime") != "$self" ]]; then
+      PATH=$user_path exec "$profile_runtime" sync
+    fi
+    sync_loop ;;
+esac
+
 command=${1:-}
 [[ $# == 0 ]] || shift
 case $command in
@@ -377,6 +383,5 @@ case $command in
   sync) sync_loop "$@" ;;
   service) service "$@" ;;
   shell) shell "$@" ;;
-  log-writer) [[ $# == 1 && $1 =~ $name_pattern ]] || usage; log_writer "$1" ;;
   *) usage ;;
 esac

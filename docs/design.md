@@ -103,7 +103,7 @@ An agent that needs a proxy, a wrapper or another build overrides its
 | `~/.local/state/denbox/` | runtime state: fetched sources, the applied revision, `status` |
 | `~/.local/state/denbox/optional-services/NAME` | marker of a switched-on optional service |
 | `~/.local/state/denbox/logs/NAME/current` | a service's log, 10 x 1 MB |
-| `/run/denbox/` | s6 scan directory and locks; gone on restart |
+| `/run/denbox/` | s6 scan directory (`services/`) and locks; gone on restart, and may be `noexec` |
 | `/run/secrets/denbox_bootstrap`, `/run/secrets/denbox_git_token` | the bootstrap, mounted by the host |
 
 One command, `denbox`, replaces the set of commands the predecessor had:
@@ -114,6 +114,10 @@ One command, `denbox`, replaces the set of commands the predecessor had:
     denbox service start|stop|restart NAME
     denbox service logs NAME [-f] [-n N]
     denbox shell [ARGS]                   the configured shell, with the secrets of consumer `shell`
+
+The sync loop is the supervised service `denbox-sync`; a box cannot name a
+service so. `~/.config/denbox/shell` is responsible for calling the secrets
+provider with consumer `shell`; `denbox shell` only runs it.
 
 The predecessor's command, variable and directory names do not appear
 anywhere in this repository. There is no compatibility layer for them.
@@ -136,6 +140,10 @@ The host hands a box two files. Nothing else tells it what to become.
 }
 ```
 
+`ref` is a branch. `sync_interval` (30 to 86400, default 300), `apply_timeout`
+(30 to 86400, default 1800) and `git_username` (default `oauth2`) may be left
+out. A bootstrap that is missing or not valid leaves the last valid one in use.
+
 `denbox_git_token` holds a token that can read the repository, or is empty for
 a public one. 1Password is not part of the bootstrap.
 
@@ -153,6 +161,13 @@ a public one. 1Password is not part of the bootstrap.
 
 A failed fetch, build or activation keeps the box as it was. A box restarts
 from its last applied state without network.
+
+A box without `follow` skips steps 3 and 4 while the revision is the one it
+applied (it still reconciles). A box with `follow` builds at every sync with
+`--refresh`, so Nix looks at the followed branches again, and activates only
+when the build's store path changed. After an activation, at most once a day,
+the runtime keeps three generations of the user's profiles and collects the
+store.
 
 `denbox.follow` is how a kit update reaches boxes without a commit to every
 environment. `denbox.follow.denbox = "github:riprsa/denbox";` makes the box
