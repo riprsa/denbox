@@ -50,6 +50,11 @@ commit() { git -C "$srv/environment" add -A && git -C "$srv/environment" -c user
 sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 "$srv"
 mkdir -p "$srv/denbox" "$srv/environment"
 git -C "$root" ls-files -z -co --exclude-standard | (cd "$root" && tar --null -T - -cf -) | tar -x -C "$srv/denbox"
+# The seed: the same kit with a runtime of another store path, so that the
+# box's first activation hands the sync loop over to the box's own runtime,
+# as it does when the seed comes from another revision.
+cp -a "$srv/denbox" "$srv/seed"
+echo '# the seed of the machine test' >> "$srv/seed/kit/runtime/denbox"
 chmod -R a+rX "$srv"
 sed "s|@KIT@|$srv/denbox|" "$root/kit/runtime/tests/host-fixture/flake.nix" > "$srv/environment/flake.nix"
 echo 1 > "$srv/environment/version"
@@ -61,7 +66,7 @@ git daemon --reuseaddr --export-all --base-path="$srv" --listen=127.0.0.1 --port
 repository=git://127.0.0.1:9418/environment
 
 echo '# install-host.sh installs Nix and the box for the user the box names'
-sudo env DENBOX_SEED="path:$srv/denbox" DENBOX_SYNC_INTERVAL=30 \
+sudo env DENBOX_SEED="path:$srv/seed" DENBOX_SYNC_INTERVAL=30 \
   bash "$root/install-host.sh" --repository "$repository" --box test < /dev/null
 getent passwd "$user" > /dev/null || fail "no user $user"
 [[ $(sudo stat -c '%U:%G %a' /etc/denbox/test/git_token) == "root:$user 640" ]] || fail 'token file permissions'
@@ -78,8 +83,10 @@ wait_for 60 'denbox service status worker | grep -q "^worker: up "'
 # The first activation installs the box's own runtime; the sync loop exits
 # so that s6 starts it, a few seconds later.
 wait_for 60 'denbox service status denbox-sync | grep -q "^denbox-sync: up "'
-wait_for 60 'tr "\0" " " < /proc/$(denbox service status denbox-sync | sed -n "s/.*up (pid \([0-9]*\).*/\1/p")/cmdline |
-  grep -q "/.nix-profile/bin/denbox sync"'
+# The loop's script, resolved from its working directory, is the profile's.
+wait_for 60 'pid=$(denbox service status denbox-sync | sed -n "s/.*up (pid \([0-9]*\).*/\1/p")
+  script=$(tr "\0" "\n" < "/proc/$pid/cmdline" | sed -n 2p)
+  [ "$(cd "/proc/$pid/cwd" && readlink -f "$script")" = "$(readlink -f ~/.nix-profile/bin/denbox)" ]'
 [[ $(as 'denbox shell -c "id -un"') == "$user" ]] || fail 'denbox shell'
 
 echo '# a new commit is applied'
