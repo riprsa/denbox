@@ -3,6 +3,7 @@
 #
 #   denbox supervise                       PID 1 after tini: s6 over the services and the sync loop
 #   denbox sync [--once]                   fetch, build, activate, reconcile services
+#   denbox host                            print what the box asks of its host, as JSON
 #   denbox service status [NAME]
 #   denbox service start|stop|restart NAME
 #   denbox service reconcile               make the supervised services match ~/.config/denbox/services now
@@ -45,7 +46,7 @@ sync_service=denbox-sync
 name_pattern='^[a-z][a-z0-9-]*$'
 
 usage() {
-  sed -n '3,9s/^# //p' "$self" >&2
+  sed -n '3,10s/^# //p' "$self" >&2
   exit 64
 }
 
@@ -189,17 +190,17 @@ service() {
     logs)
       [[ -n $name ]] || usage
       shift 2
-      local lines=100 follow=()
+      local lines=100 tail_options=()
       while (($#)); do
         case $1 in
-          -f) follow=(-F) ;;
+          -f) tail_options=(-F) ;;
           -n) [[ ${2:-} =~ ^[0-9]+$ ]] || usage; lines=$2; shift ;;
           *) usage ;;
         esac
         shift
       done
       # -F follows "current" across rotation.
-      exec tail -n "$lines" "${follow[@]}" "$logs/$name/current" ;;
+      exec tail -n "$lines" "${tail_options[@]}" "$logs/$name/current" ;;
     *) usage ;;
   esac
 }
@@ -253,19 +254,15 @@ resolve() {
   jq -c .locked <<<"$output"
 }
 
-# sync_once: one pass of the four steps of the design's Sync section. Any
-# failure exits before the applied state changes.
-sync_once() {
-  local cache repository ref box deadline revision snapshot follow entry locked resolved pinned
-  local fingerprint applied_revision applied_box candidate applied started remaining
-  local overrides=()
-  cache=$(read_bootstrap)
-  repository=$(jq -r .repository "$cache")
-  ref=$(jq -r .ref "$cache")
-  box=$(jq -r .box "$cache")
-  deadline=$(jq -r '.apply_timeout // 1800' "$cache")
-  jq -r '.sync_interval // 300' "$cache" > "$state/interval"
-  DENBOX_GIT_USERNAME=$(jq -r '.git_username // "oauth2"' "$cache")
+# fetch_box BOOTSTRAP: steps 1 and 2 of the design's Sync section and the
+# resolution of every followed reference, for sync_once and host. Sets the
+# caller's box, revision, snapshot, follow, resolved and overrides.
+fetch_box() {
+  local repository ref entry locked pinned applied_revision applied_box
+  repository=$(jq -r .repository "$1")
+  ref=$(jq -r .ref "$1")
+  box=$(jq -r .box "$1")
+  DENBOX_GIT_USERNAME=$(jq -r '.git_username // "oauth2"' "$1")
   export DENBOX_GIT_USERNAME
 
   # 1. Fetch the ref and unpack it into a snapshot without .git.
@@ -294,13 +291,32 @@ sync_once() {
     follow=$(jq -cS . <<<"$follow")
   fi
 
-  # Every followed reference resolved to its revision now. The fingerprint
-  # names the revisions, so an unchanged one skips the build.
+  # Every followed reference resolved to its revision now, and pinned there
+  # as --override-input, so what is evaluated is what the fingerprint names.
   resolved='{}'
   while IFS= read -r -d '' entry; do
     locked=$(resolve "${entry#*=}")
     resolved=$(jq -cS --arg name "${entry%%=*}" --argjson locked "$locked" '.[$name] = $locked' <<<"$resolved")
   done < <(jq -j 'to_entries[] | "\(.key)=\(.value)\u0000"' <<<"$follow")
+  overrides=()
+  if [[ $resolved != '{}' ]]; then
+    pinned=$(DENBOX_LOCKED=$resolved nix eval --impure --json --expr \
+      'builtins.mapAttrs (_: builtins.flakeRefToString) (builtins.fromJSON (builtins.getEnv "DENBOX_LOCKED"))')
+    while IFS= read -r -d '' entry; do overrides+=(--override-input "${entry%%=*}" "${entry#*=}"); done \
+      < <(jq -j 'to_entries[] | "\(.key)=\(.value)\u0000"' <<<"$pinned")
+  fi
+}
+
+# sync_once: one pass of the four steps of the design's Sync section. Any
+# failure exits before the applied state changes.
+sync_once() {
+  local cache box deadline revision snapshot follow resolved
+  local fingerprint candidate applied started remaining
+  local overrides=()
+  cache=$(read_bootstrap)
+  deadline=$(jq -r '.apply_timeout // 1800' "$cache")
+  jq -r '.sync_interval // 300' "$cache" > "$state/interval"
+  fetch_box "$cache"
   fingerprint="$revision $box $resolved"
   if [[ -e $state/applied && $fingerprint == "$(cat "$state/fingerprint" 2>/dev/null)" ]]; then
     reconcile
@@ -309,12 +325,6 @@ sync_once() {
 
   # 3. Build against the resolved revisions, so the box is what the
   # fingerprint names. They are pinned, so the build needs no --refresh.
-  if [[ $resolved != '{}' ]]; then
-    pinned=$(DENBOX_LOCKED=$resolved nix eval --impure --json --expr \
-      'builtins.mapAttrs (_: builtins.flakeRefToString) (builtins.fromJSON (builtins.getEnv "DENBOX_LOCKED"))')
-    while IFS= read -r -d '' entry; do overrides+=(--override-input "${entry%%=*}" "${entry#*=}"); done \
-      < <(jq -j 'to_entries[] | "\(.key)=\(.value)\u0000"' <<<"$pinned")
-  fi
   echo "Building boxes.$box at $revision"
   started=$SECONDS
   timeout --foreground --kill-after=10s "$deadline" \
@@ -343,6 +353,19 @@ sync_once() {
     [[ $old == "$snapshot" ]] || rm -rf -- "$old"
   done
   maintain_store || echo 'Store maintenance failed; it is retried after the next activation' >&2
+}
+
+# host: prints boxes.<box>.host of the bootstrap's environment, fetched and
+# followed as a sync would, building nothing. install.sh runs it in a
+# throwaway container of the image over the box's Nix volume, so what the
+# evaluation fetches is in the store for the box's first build.
+host() {
+  local cache box revision snapshot follow resolved
+  local overrides=()
+  mkdir -p "$state"
+  cache=$(read_bootstrap)
+  fetch_box "$cache"
+  nix eval "${cache_options[@]}" --no-write-lock-file --json "${overrides[@]}" "path:$snapshot#boxes.$box.host"
 }
 
 # maintain_store: at most once per gc_interval, keeps gc_keep generations of
@@ -436,6 +459,7 @@ command=${1:-}
 case $command in
   supervise) [[ $# == 0 ]] || usage; supervise ;;
   sync) sync_loop "$@" ;;
+  host) [[ $# == 0 ]] || usage; host ;;
   service) service "$@" ;;
   shell) shell "$@" ;;
   *) usage ;;

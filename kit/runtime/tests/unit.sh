@@ -41,7 +41,8 @@ export FAKE=$tmp/fake
 unset XDG_STATE_HOME
 mkdir -p "$HOME" "$FAKE/bin" "$FAKE/store"
 
-# The fake nix: eval prints the snapshot's follow.json, build copies the
+# The fake nix: eval prints the snapshot's follow.json, or for .host the
+# snapshot's host.json with the arguments it was called with, build copies the
 # snapshot's box/ into a store path named after the snapshot and the
 # overrides, and fails when the snapshot has a file named fail. flake
 # prefetch resolves a reference by $FAKE/revisions.json; a revision
@@ -67,6 +68,7 @@ case $1 in
   eval)
     if [[ $* == *--expr* ]]; then jq -c 'map_values("\(.url)?rev=\(.rev)")' <<<"$DENBOX_LOCKED"; exit 0; fi
     snapshot=${installable#path:}; snapshot=${snapshot%%#*}
+    if [[ $installable == *.host ]]; then jq -c --arg args "$*" '. + {args: $args}' "$snapshot/host.json"; exit 0; fi
     cat "$snapshot/follow.json" 2>/dev/null || echo '{}' ;;
   build)
     shift
@@ -263,6 +265,17 @@ done
 echo '{"github:example/denbox": "r2", "github:example/nixpkgs": "n1"}' > "$FAKE/revisions.json"
 "$denbox" sync --once
 [[ $(builds) == "$before" ]] || fail 'a resolvable reference again was built'
+
+echo '# host prints the declaration evaluated against the followed revisions, in a state of its own'
+echo '{"memory": "4g"}' > "$repository/host.json"
+commit host
+before=$(builds)
+host=$(DENBOX_STATE=$tmp/host-state "$denbox" host)
+jq -e '.memory == "4g"' <<<"$host" > /dev/null || fail "host: $host"
+jq -r .args <<<"$host" | grep -q -- '--override-input denbox github:example/denbox?rev=r2 .*#boxes.test.host$' ||
+  fail "host not evaluated pinned: $host"
+[[ $(builds) == "$before" && ! -e $tmp/host-state/applied ]] || fail 'host built or applied'
+git -C "$repository" rm -q host.json
 git -C "$repository" rm -q follow.json
 commit 'follow nothing'
 

@@ -1,1 +1,1 @@
-{"binds":[],"capabilities":["CAP_NET_ADMIN"],"cpus":2,"devices":["/etc/passwd"],"dns":[],"memory":"4 GB","pids":2048,"ports":{},"shmSize":"64m","tmpSize":null}
+{"binds":[],"capabilities":["CAP_NET_ADMIN"],"cpus":2,"devices":["/etc/passwd"],"dns":[],"memory":"4 GB","pids":2048,"ports":{},"secrets":{},"shmSize":"64m","tmpSize":null}

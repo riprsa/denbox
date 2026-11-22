@@ -7,7 +7,11 @@ services:
     # T3 Code labels the environment with the hostname.
     hostname: "personal"
     restart: unless-stopped
-    secrets: [denbox_bootstrap, denbox_git_token]
+    secrets:
+      - denbox_bootstrap
+      - denbox_git_token
+      - {source: "denbox_key", target: "/etc/example/key"}
+      - {source: "denbox_token", target: "/run/secrets/denbox_token"}
     volumes:
       - home:/root
       - nix:/nix
@@ -41,6 +45,10 @@ secrets:
     file: "./bootstrap.json"
   denbox_git_token:
     file: "./git_token"
+  "denbox_key":
+    file: "./secrets/key"
+  "denbox_token":
+    file: "./secrets/token"
 volumes:
   home:
     name: "denbox-personal-home"

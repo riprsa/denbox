@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
-# The box image: Debian, single-user Nix, git, tini and a seed copy of the
-# runtime. Everything else a box runs comes from its environment.
+# The box image: Debian, single-user Nix, git, jq, tini, a seed copy of the
+# runtime and what install.sh runs in a throwaway container of it. Everything else a box runs comes from its environment.
 #
 #   docker build -f image/Dockerfile .
 #
@@ -14,7 +14,7 @@ ARG NIX_INSTALL_FILTER_SYSCALLS=true
 
 # curl and xz-utils only fetch and unpack Nix; Nix has its own afterwards.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      bash ca-certificates curl git tini xz-utils \
+      bash ca-certificates curl git jq tini xz-utils \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p -m 0755 /etc/nix /nix /opt/nix \
     && printf '%s\n' 'experimental-features = nix-command flakes' 'sandbox = false' \
@@ -59,9 +59,12 @@ RUN NIX_CONFIG="filter-syscalls = $NIX_INSTALL_FILTER_SYSCALLS" \
 COPY --chmod=0755 image/denbox /usr/local/bin/denbox
 COPY --chmod=0755 image/login /usr/local/libexec/denbox/login
 COPY --chmod=0644 image/profile.sh /etc/profile.d/denbox.sh
-# The standard deployment and its Tailscale overlay, which install.sh reads
-# out of the image.
-COPY --chmod=0644 deploy/compose.yaml deploy/compose.tailscale.yaml /usr/local/share/denbox/
+# What install.sh runs in a throwaway container: deploy/render, and the
+# runtime's source to evaluate what a box asks of its host (`denbox host`).
+# The runtime is this source and not the seed, because the seed lives on
+# the box's Nix volume, which keeps the one of the image that created it.
+COPY --chmod=0755 deploy/render /usr/local/share/denbox/render
+COPY --chmod=0755 kit/runtime/denbox kit/runtime/askpass /usr/local/share/denbox/runtime/
 
 WORKDIR /root
 # tini as PID 1 over the supervisor. The runtime clears what an earlier

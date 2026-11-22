@@ -3,14 +3,16 @@
 # into a deployment of that box, or into words for the person who decides
 # whether to start it (docs/design.md, What a box asks of its host).
 #
-#   render --format compose --name NAME --image IMAGE --bootstrap FILE --token FILE [HOST]
-#   render --format quadlet --name NAME --image IMAGE --bootstrap FILE --token FILE --output DIR [HOST]
+#   render --format compose --name NAME --image IMAGE --bootstrap FILE --token FILE [--secret NAME=FILE]... [HOST]
+#   render --format quadlet --name NAME --image IMAGE --bootstrap FILE --token FILE [--secret NAME=FILE]... --output DIR [HOST]
 #   render --explain --name NAME [HOST]
 #
 # HOST is the JSON file, standard input when it is missing or -. NAME names
 # the container denbox-NAME and its volumes denbox-NAME-home and
-# denbox-NAME-nix. FILE are the bootstrap and the token file, absolute, or
-# relative to the Compose project directory or to the directory of the units.
+# denbox-NAME-nix. FILE are the bootstrap, the token file and the file of
+# each secret the box declares, absolute, or relative to the Compose project
+# directory or to the directory of the units. Every declared secret needs a
+# --secret, and every --secret a declared secret.
 #
 # compose prints one Compose file. quadlet writes denbox-NAME.container and
 # the two .volume units to DIR. --explain prints what the box asks for, what
@@ -26,10 +28,11 @@ fail() { printf 'denbox render: %s\n' "$1" >&2; exit "${2:-64}"; }
 usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0" >&2; exit 64; }
 
 format='' name='' image='' bootstrap='' token='' output='' input=-
+secrets=()
 while (($#)); do
   case $1 in
     --explain) format=explain; shift; continue ;;
-    --format|--name|--image|--bootstrap|--token|--output) [[ $# -ge 2 ]] || usage ;;
+    --format|--name|--image|--bootstrap|--token|--secret|--output) [[ $# -ge 2 ]] || usage ;;
     -) input=-; shift; continue ;;
     -*) usage ;;
     *) input=$1; shift; continue ;;
@@ -41,6 +44,7 @@ while (($#)); do
     --bootstrap) bootstrap=$2 ;;
     --token) token=$2 ;;
     --output) output=$2 ;;
+    --secret) secrets+=("$2") ;;
   esac
   shift 2
 done
@@ -54,10 +58,18 @@ esac
 if [[ $format != explain ]]; then
   [[ $image =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]] || fail "Not an image reference: $image"
   # The characters Compose, Podman and systemd read as syntax are out.
-  for file in "$bootstrap" "$token"; do
+  for file in "$bootstrap" "$token" "${secrets[@]#*=}"; do
     [[ $file =~ ^[A-Za-z0-9._/@+-]+$ ]] || fail "Not a path this script can write without quoting: '$file'"
   done
 fi
+[[ $format != explain || ${#secrets[@]} == 0 ]] || fail '--secret is for --format compose and quadlet'
+# The secrets' files by name, as a JSON object.
+named=()
+for secret in "${secrets[@]}"; do
+  [[ $secret =~ ^[a-z][a-z0-9_]*= ]] || fail "Not NAME=FILE: $secret"
+  named+=(--arg "${secret%%=*}" "${secret#*=}")
+done
+files=$(jq -n '$ARGS.named' "${named[@]}")
 [[ $format != quadlet || -n $output ]] || fail '--format quadlet needs --output DIR'
 [[ $format == quadlet || -z $output ]] || fail '--output is for --format quadlet only'
 
@@ -72,9 +84,10 @@ checks='
   def port: type == "number" and . == floor and . >= 1 and . <= 65535;
   def keys_are($k): type == "object" and (keys == ($k | sort));
   def list(f): type == "array" and all(.[]; f);
-  # Paths the deployment itself mounts; a bind there would hide it.
-  def reserved: . as $t | ["/root", "/nix", "/tmp", "/dev/shm", "/run/denbox", "/run/secrets"] | any(. == $t);
-  if keys_are(["ports", "memory", "cpus", "pids", "tmpSize", "shmSize", "devices", "capabilities", "binds", "dns"]) | not then
+  # Paths the deployment itself mounts; a bind or a secret there would hide it.
+  def reserved: . as $t | ["/root", "/nix", "/tmp", "/dev/shm", "/run/denbox", "/run/secrets",
+    "/run/secrets/denbox_bootstrap", "/run/secrets/denbox_git_token"] | any(. == $t);
+  if keys_are(["ports", "memory", "cpus", "pids", "tmpSize", "shmSize", "devices", "capabilities", "binds", "dns", "secrets"]) | not then
     "the declaration has the keys \(if type == "object" then keys else type end), not those of denbox.host this script knows"
   else
     (.ports | if type != "object" then "ports is not an object" else
@@ -100,10 +113,27 @@ checks='
       then "bind \(tojson): source and target must be absolute paths of letters, digits and ._/@+-, readOnly true or false"
       elif .target | reserved then "bind \(tojson) hides \(.target), which the deployment mounts"
       else empty end
-    end)
+    end),
+    (.secrets | if type != "object" then "secrets is not an object" else
+      (to_entries[] | .key as $n | .value |
+        if ($n | test("^[a-z][a-z0-9_]*$")) and ($n != "bootstrap") and ($n != "git_token") | not
+        then "secret \($n | tojson): a name is lowercase letters, digits and _, and not bootstrap or git_token"
+        elif keys_are(["target", "allowEmpty", "description"]) and (.target | path) and (.allowEmpty | type == "boolean")
+          and (.description | type == "string" and test("^[ -~]{1,200}$")) | not
+        then "secret \($n): \(tojson) is not an absolute target, allowEmpty true or false and one line of description"
+        elif .target | reserved then "secret \($n) hides \(.target), which the deployment mounts"
+        else empty end)
+    end),
+    ([(.binds | arrays | .[].target?), (.secrets | objects | .[].target?)] | group_by(.)[] | select(length > 1) |
+      "\(.[0]) is the target of two binds or secrets")
   end'
 problems=$(jq -r "$checks" <<<"$host") || fail 'The declaration is not JSON' 65
 [[ -z $problems ]] || fail "$(printf 'cannot express what the box asks for:\n%s' "$problems")" 65
+if [[ $format != explain ]]; then
+  given=$(jq -r --argjson files "$files" '((.secrets | keys) - ($files | keys) | map("no --secret for the declared secret \(.)")[]),
+    (($files | keys) - (.secrets | keys) | map("--secret \(.) names no declared secret")[])' <<<"$host")
+  [[ -z $given ]] || fail "$given"
+fi
 
 # What weakens the box's isolation first, then the rest.
 explain='
@@ -114,6 +144,7 @@ explain='
    + [.binds[] | "! host path \(bind)"]
    + [.ports | to_entries[] | select(.value.address | startswith("127.") | not) | "! \(published), reachable beyond this machine"]
    + [.ports | to_entries[] | select(.value.address | startswith("127.")) | "  \(published)"]
+   + [.secrets | to_entries[] | "  secret \(.key) at \(.value.target)\(if .value.allowEmpty then ", may be empty" else "" end): \(.value.description)"]
    + ["  memory \(.memory), \(.cpus) CPUs, \(.pids) processes",
       "  /tmp \(.tmpSize // "up to the memory limit"), /dev/shm \(.shmSize)"]
    + [if .dns == [] then empty else "  resolvers \(.dns | join(", "))" end])[]'
@@ -130,7 +161,9 @@ compose='
   "    # T3 Code labels the environment with the hostname.",
   "    hostname: \($name | q)",
   "    restart: unless-stopped",
-  "    secrets: [denbox_bootstrap, denbox_git_token]",
+  (if .secrets == {} then "    secrets: [denbox_bootstrap, denbox_git_token]" else
+    "    secrets:", "      - denbox_bootstrap", "      - denbox_git_token",
+    (.secrets | to_entries[] | "      - {source: \("denbox_" + .key | q), target: \(.value.target | q)}") end),
   "    volumes:",
   "      - home:/root",
   "      - nix:/nix",
@@ -157,6 +190,7 @@ compose='
   "    file: \($bootstrap | q)",
   "  denbox_git_token:",
   "    file: \($token | q)",
+  (.secrets | keys[] | "  \("denbox_" + . | q):", "    file: \($files[.] | q)"),
   "volumes:",
   "  home:",
   "    name: \("denbox-\($name)-home" | q)",
@@ -182,6 +216,7 @@ container='
   "# The bootstrap; Z gives the files a label of this container where SELinux is on.",
   "Volume=\($bootstrap):/run/secrets/denbox_bootstrap:ro,Z",
   "Volume=\($token):/run/secrets/denbox_git_token:ro,Z",
+  (.secrets | to_entries[] | "Volume=\($files[.key]):\(.value.target):ro,Z"),
   (.binds[] | "Volume=\(.source):\(.target)\(if .readOnly then ":ro" else "" end)"),
   "Tmpfs=/run/denbox:mode=0700",
   "# Nix builds run scripts in /tmp; a tmpfs is noexec unless it says exec.",
@@ -210,7 +245,8 @@ volume() {
 }
 
 render() {
-  jq -r --arg name "$name" --arg image "$image" --arg bootstrap "$bootstrap" --arg token "$token" "$1" <<<"$host"
+  jq -r --arg name "$name" --arg image "$image" --arg bootstrap "$bootstrap" --arg token "$token" \
+    --argjson files "$files" "$1" <<<"$host"
 }
 case $format in
   explain)
