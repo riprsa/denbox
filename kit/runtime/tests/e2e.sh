@@ -6,32 +6,34 @@
 #
 #   kit/runtime/tests/e2e.sh IMAGE
 #
-# Creates the container denbox-test-e2e-$$ and its two volumes, and removes
-# them by name when done.
+# DENBOX_TEST_CLI is the container command, docker (the default) or podman,
+# rootless or not. Creates the container denbox-test-e2e-$$ and its two
+# volumes, and removes them by name when done.
 set -euo pipefail
 [[ $# == 1 ]] || { echo 'Usage: e2e.sh IMAGE' >&2; exit 64; }
 image=$1
+cli=${DENBOX_TEST_CLI:-docker}
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 name=denbox-test-e2e-$$
 home=$name-home
 store=$name-nix
 tmp=$(mktemp -d)
 cleanup() {
-  docker rm -fv "$name" > /dev/null 2>&1 || true
-  docker volume rm "$home" "$store" > /dev/null 2>&1 || true
+  "$cli" rm -fv "$name" > /dev/null 2>&1 || true
+  "$cli" volume rm "$home" "$store" > /dev/null 2>&1 || true
   rm -rf "$tmp"
 }
 trap cleanup EXIT
 fail() {
   echo "FAIL: $*" >&2
-  docker logs --tail 80 "$name" >&2 || true
+  "$cli" logs --tail 80 "$name" >&2 || true
   exit 1
 }
 trap 'fail "line $LINENO: $BASH_COMMAND"' ERR
 
-box() { docker exec "$name" "$@"; }
+box() { "$cli" exec "$name" "$@"; }
 # in_box SCRIPT: runs a shell script in the container.
-in_box() { docker exec "$name" bash -euo pipefail -c "$1"; }
+in_box() { "$cli" exec "$name" bash -euo pipefail -c "$1"; }
 wait_for() {
   for ((attempt = 0; attempt < 150; attempt++)); do
     if in_box "$1" > /dev/null 2>&1; then return 0; fi
@@ -55,15 +57,15 @@ jq -n '{version: 2, repository: "file:///srv/environment", ref: "main", box: "te
   sync_interval: 30, apply_timeout: 600}' > "$tmp/secrets/denbox_bootstrap"
 : > "$tmp/secrets/denbox_git_token"
 
-docker volume create "$home" > /dev/null
-docker volume create "$store" > /dev/null
-docker create --name "$name" --network none --memory 1g --cpus 2 --pids-limit 1024 \
+"$cli" volume create "$home" > /dev/null
+"$cli" volume create "$store" > /dev/null
+"$cli" create --name "$name" --network none --memory 1g --cpus 2 --pids-limit 1024 \
   --tmpfs /run/denbox:mode=0700 -v "$home:/root" -v "$store:/nix" "$image" > /dev/null
 # As root's files whoever runs this test: Git refuses a repository that
-# another user owns, and docker cp keeps the owner of what it copies.
-tar -C "$tmp/srv" --owner=0 --group=0 -c . | docker cp - "$name:/srv"
-tar -C "$tmp" --owner=0 --group=0 -c secrets | docker cp - "$name:/run"
-docker start "$name" > /dev/null
+# another user owns, and "$cli" cp keeps the owner of what it copies.
+tar -C "$tmp/srv" --owner=0 --group=0 -c . | "$cli" cp - "$name:/srv"
+tar -C "$tmp" --owner=0 --group=0 -c secrets | "$cli" cp - "$name:/run"
+"$cli" start "$name" > /dev/null
 # Later commits are made in the container, with an identity of their own.
 in_box 'git config --global user.name test && git config --global user.email test@example.com'
 
@@ -84,6 +86,7 @@ box timeout 20 denbox supervise 2>/dev/null || result=$?
 [[ $result == 75 ]] || fail "a second supervise exited $result"
 box denbox service status worker | grep '^worker: up ' > /dev/null || fail 'worker not up after a second supervise'
 [[ $(box denbox shell -c 'echo ok') == ok ]] || fail 'denbox shell'
+in_box 'printf "#!/bin/sh\necho ok\n" > /tmp/exec && chmod +x /tmp/exec && [ "$(/tmp/exec)" = ok ]' || fail '/tmp is noexec'
 
 echo '# a new commit is applied by sync --once'
 box denbox service stop denbox-sync
@@ -109,7 +112,7 @@ box denbox service status worker | grep '^worker: up ' > /dev/null || fail 'work
 echo '# a restart without its repository comes back from the applied state'
 in_box 'mv /srv/environment /srv/gone'
 starts=$(in_box 'wc -l < /root/worker-starts')
-docker restart -t 60 "$name" > /dev/null
+"$cli" restart -t 60 "$name" > /dev/null
 wait_for "[ \$(wc -l < /root/worker-starts) -gt $starts ] && denbox service status worker | grep '^worker: up '"
 wait_for 'grep "failed exit=" /root/.local/state/denbox/status'
 [[ $(version) == '2 main-2' ]] || fail "version $(version)"

@@ -6,6 +6,7 @@
     ./api.nix
     ./secrets.nix
     ./follow.nix
+    ./host.nix
     ./tools.nix
     ./t3.nix
     ./agents.nix

@@ -1,0 +1,3 @@
+denbox render: cannot express what the box asks for:
+bind {"source":"/srv/x","target":"/nix","readOnly":true} hides /nix, which the deployment mounts
+bind {"source":"/srv/$HOME","target":"/y","readOnly":true}: source and target must be absolute paths of letters, digits and ._/@+-, readOnly true or false

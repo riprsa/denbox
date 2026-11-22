@@ -1,0 +1,47 @@
+# The box under rootless Podman: the runtime's end-to-end test with Podman
+# as the container command, then the fixture box started from the Quadlet
+# units deploy/render writes, as a user service. The image is built with
+# Docker, as image.yml builds it, and loaded into Podman.
+name: podman
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  podman:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
+      - run: shellcheck -x deploy/render deploy/tests/*.sh kit/runtime/tests/*.sh
+      - run: podman version
+      - run: docker build -f image/Dockerfile -t denbox-test-image .
+      - run: docker save denbox-test-image | podman load
+      # As the runner is: Podman without a user systemd.
+      - run: kit/runtime/tests/e2e.sh denbox-test-image
+        env:
+          DENBOX_TEST_CLI: podman
+      # A user systemd for Quadlet, with the cgroup controllers delegated
+      # that the limits need.
+      - name: User systemd
+        run: |
+          sudo mkdir -p /etc/systemd/system/user@.service.d
+          printf '[Service]\nDelegate=cpu cpuset io memory pids\n' |
+            sudo tee /etc/systemd/system/user@.service.d/delegate.conf > /dev/null
+          sudo systemctl daemon-reload
+          sudo loginctl enable-linger "$USER"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          for _ in $(seq 30); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 1; done
+      - name: Golden units accepted by Quadlet
+        run: |
+          for units in deploy/tests/render/*.quadlet; do
+            echo "# $units"
+            QUADLET_UNIT_DIRS=$units /usr/libexec/podman/quadlet -dryrun -user
+          done
+      - run: deploy/tests/quadlet.sh docker.io/library/denbox-test-image:latest

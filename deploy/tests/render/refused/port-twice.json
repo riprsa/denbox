@@ -1,0 +1,1 @@
+{"binds":[],"capabilities":[],"cpus":2,"devices":[],"dns":[],"memory":"4g","pids":2048,"ports":{"a":{"address":"0.0.0.0","hostPort":8080,"port":80},"b":{"address":"127.0.0.1","hostPort":8080,"port":81}},"shmSize":"64m","tmpSize":null}

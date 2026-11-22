@@ -22,8 +22,9 @@
       forAllSystems = f: lib.genAttrs systems (system: f (pkgsFor system));
 
       # A box: the Home Manager activation package of a box's module on top
-      # of the kit's modules, with the box's denbox.follow and its evaluated
-      # configuration attached (docs/design.md, Environment contract).
+      # of the kit's modules, with the box's denbox.follow, its denbox.host
+      # and its evaluated configuration attached (docs/design.md,
+      # Environment contract).
       mkBox = system: module:
         let
           home = home-manager.lib.homeManagerConfiguration {
@@ -40,7 +41,7 @@
             ];
           };
         in
-        home.activationPackage // { inherit (home.config.denbox) follow; inherit (home) config; };
+        home.activationPackage // { inherit (home.config.denbox) follow host; inherit (home) config; };
     in
     {
       # An environment imports this into each box's Home Manager configuration.
@@ -82,6 +83,10 @@
           };
           bundle = pkgs.callPackage ./kit/nix/checks/bundle.nix { inherit (self.lib) mkBundle; };
           boxes = pkgs.callPackage ./kit/nix/checks/boxes.nix {
+            inherit system;
+            kit = self;
+          };
+          host = pkgs.callPackage ./kit/nix/checks/host.nix {
             inherit system;
             kit = self;
           };
