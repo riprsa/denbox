@@ -67,8 +67,10 @@ docker volume create "$store" > /dev/null
 docker create --name "$name" --memory "${DENBOX_TEST_MEMORY:-4g}" --cpus 2 --pids-limit 2048 \
   --tmpfs /run/denbox:mode=0700 --tmpfs /tmp:mode=1777,exec \
   -v "$home:/root" -v "$store:/nix" "$image" > /dev/null
-docker cp "$tmp/srv/." "$name:/srv"
-docker cp "$tmp/secrets" "$name:/run/secrets"
+# As root's files whoever runs this test: Git refuses a repository that
+# another user owns, and docker cp keeps the owner of what it copies.
+tar -C "$tmp/srv" --owner=0 --group=0 -c . | docker cp - "$name:/srv"
+tar -C "$tmp" --owner=0 --group=0 -c secrets | docker cp - "$name:/run"
 docker start "$name" > /dev/null
 
 echo '# the first sync builds and activates the box as root'
