@@ -1,5 +1,7 @@
-# Tests the runtime, builds the image and runs the end-to-end test against
-# it. On main, an image that passed is pushed as latest and as the commit.
+# Tests the runtime and the installer, builds the image and runs both
+# end-to-end tests against it: the runtime's with a stub box and no network,
+# and the real box built from the template. On main, an image that passed
+# both is pushed as latest and as the commit.
 #
 # amd64 only. arm64 would need an arm64 runner (ubuntu-24.04-arm) running the
 # same job, each pushing a per-architecture tag, and a final job joining them
@@ -21,11 +23,41 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends s6 shellcheck
-      - run: shellcheck -x kit/runtime/denbox kit/runtime/askpass kit/runtime/tests/*.sh image/init image/denbox image/denbox-login
+      - run: shellcheck -x install.sh kit/runtime/denbox kit/runtime/askpass kit/runtime/tests/*.sh image/init image/denbox image/denbox-login
       - run: kit/runtime/tests/unit.sh
+      - run: python3 -m unittest discover -s deploy/tests
 
   image:
     needs: runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker build -f image/Dockerfile -t denbox-test-image .
+      - run: kit/runtime/tests/e2e.sh denbox-test-image
+      - run: docker save denbox-test-image | zstd -T0 -3 > image.tar.zst
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: image
+          path: image.tar.zst
+          retention-days: 1
+
+  # A box from the template, built against this checkout of the kit. It
+  # downloads nixpkgs, T3 Code and both agents.
+  box:
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: image
+      - run: zstd -dc image.tar.zst | docker load
+      - run: kit/runtime/tests/box.sh denbox-test-image
+
+  push:
+    needs: box
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -33,15 +65,16 @@ jobs:
     env:
       IMAGE: ghcr.io/riprsa/denbox
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: docker build -f image/Dockerfile -t "$IMAGE:$GITHUB_SHA" .
-      - run: kit/runtime/tests/e2e.sh "$IMAGE:$GITHUB_SHA"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: image
       - name: Push
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          zstd -dc image.tar.zst | docker load
           echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:latest"
+          docker tag denbox-test-image "$IMAGE:$GITHUB_SHA"
+          docker tag denbox-test-image "$IMAGE:latest"
           docker push "$IMAGE:$GITHUB_SHA"
           docker push "$IMAGE:latest"
