@@ -1,8 +1,10 @@
 # The denbox command with the tools it calls on its own PATH. Nix itself
-# comes from the host, so the runtime always uses the host's Nix.
-{ lib, runCommand, bash, coreutils, gitMinimal, gnutar, jq, s6, util-linux }:
+# comes from the host, so the runtime always uses the host's Nix. ssh is here
+# for Git: an environment or one of its flake inputs may be fetched over SSH,
+# and the first build runs before the box has any tool of its own.
+{ lib, runCommand, bash, coreutils, gitMinimal, gnutar, jq, openssh, s6, util-linux }:
 let
-  tools = lib.makeBinPath [ coreutils gitMinimal gnutar jq s6 util-linux ];
+  tools = lib.makeBinPath [ coreutils gitMinimal gnutar jq openssh s6 util-linux ];
 in
 runCommand "denbox-runtime" { meta.mainProgram = "denbox"; } ''
   install -Dm755 ${../../runtime/denbox} $out/libexec/denbox/denbox
