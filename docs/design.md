@@ -101,6 +101,7 @@ Every option lives under `denbox.`. Nothing is on unless the table says so.
 | `denbox.tailscale.tags` | `[ ]` | tags the node asks for, such as `tag:denbox` |
 | `denbox.tailscale.ssh` | `false` | accept Tailscale SSH into the box |
 | `denbox.tailscale.acceptDns` | `true` | let the tailnet configure the box's resolver |
+| `denbox.tailscale.netfilterMode` | `"on"` | tailscaled's firewall rules: `on`, `nodivert` or `off`; see Tailscale |
 | `denbox.tailscale.userspace` | `false` | run without a tunnel device, for a host that grants none; the proxy listens on `127.0.0.1:1055` |
 | `denbox.tailscale.serve.<name>` | `{ }` | a port of the box published to the tailnet: `port`, `https` (default `true`), `path` (default `/`), `to` |
 | `denbox.host.ports.<name>` | T3's and the API's, see below | `{ port, hostPort ? port, address ? "127.0.0.1" }`, published on the host |
@@ -283,9 +284,9 @@ rules.
   `~/.local/state/denbox/tailscale/`, so a box keeps its identity across
   restarts and image changes.
 - **Settings.** Every start of the service applies `hostname`,
-  `loginServer`, `tags`, `ssh` and `acceptDns` with `tailscale up --reset`,
-  so a setting changed by hand with `tailscale set` lasts until the next
-  start. A sync that changes an option restarts the service.
+  `loginServer`, `tags`, `ssh`, `acceptDns` and `netfilterMode` with
+  `tailscale up --reset`, so a setting changed by hand with `tailscale set`
+  lasts until the next start. A sync that changes an option restarts the service.
 - **Joining.** A box that is not logged in joins with the key in
   `/run/secrets/denbox_tailscale_authkey`, which the module declares as the
   secret `tailscale_authkey` that may be empty. The key comes from the host
@@ -306,6 +307,12 @@ rules.
   the tailnet only through the proxy `tailscaled` then offers, SOCKS5 and
   HTTP on `127.0.0.1:1055`. A box without the device or the capability and
   without `userspace` does not fall back: its service says why and stays down.
+- **Ports the host publishes.** With the tunnel, tailscaled's firewall rules
+  drop every packet from the tailnet's range that does not come through the
+  tunnel. A client that reaches the host over the tailnet and connects to a
+  port the host publishes arrives with its tailnet address, so it is
+  dropped. `denbox.tailscale.netfilterMode = "off"` keeps such connections;
+  tailscaled still applies the tailnet's rules to the tunnel.
 - **Serving.** `denbox.tailscale.serve.<name> = { port = 443; https = true;
   path = "/"; to = "http://127.0.0.1:3773"; }` publishes a local port to the
   tailnet with `tailscale serve`, under the node's name and, with `https`,

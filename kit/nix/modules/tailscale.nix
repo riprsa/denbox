@@ -54,7 +54,8 @@ let
     "--advertise-tags=${lib.concatStringsSep "," cfg.tags}"
     "--ssh=${lib.boolToString cfg.ssh}"
     "--accept-dns=${lib.boolToString cfg.acceptDns}"
-  ] ++ lib.optional (cfg.loginServer != null) "--login-server=${cfg.loginServer}";
+  ] ++ lib.optional (cfg.loginServer != null) "--login-server=${cfg.loginServer}"
+    ++ lib.optional (cfg.netfilterMode != "on") "--netfilter-mode=${cfg.netfilterMode}";
 
   # One `serve` line per entry, in the order of their names.
   serveLines = lib.mapAttrsToList (_: entry: "serve " + lib.escapeShellArgs [
@@ -170,6 +171,19 @@ in
       default = true;
       description = "Let the tailnet configure the box's resolver (/etc/resolv.conf).";
     };
+    netfilterMode = mkOption {
+      type = types.enum [ "on" "nodivert" "off" ];
+      default = "on";
+      description = ''
+        Firewall rules tailscaled adds to the box (`--netfilter-mode`). With
+        "on" it drops every packet from the tailnet's range that does not
+        come through the tunnel, which includes connections to a port the
+        host publishes from a client that reaches the host over the tailnet:
+        they arrive with that client's tailnet address. "off" keeps them;
+        tailscaled still applies the tailnet's rules to what comes through
+        the tunnel. Not for a userspace node, which adds no rules.
+      '';
+    };
     userspace = mkOption {
       type = types.bool;
       default = false;
@@ -192,6 +206,10 @@ in
       {
         assertion = lib.all (entries: lib.length entries == 1) (lib.attrValues places);
         message = "denbox.tailscale.serve: two entries serve the same port and path.";
+      }
+      {
+        assertion = cfg.netfilterMode == "on" || !cfg.userspace;
+        message = "denbox.tailscale.netfilterMode: a userspace node adds no firewall rules.";
       }
       {
         assertion = lib.all (s: lib.length s == 1) (lib.attrValues schemes);
