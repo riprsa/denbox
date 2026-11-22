@@ -1,7 +1,8 @@
-# Tests the runtime and the installer, builds the image and runs both
+# Tests the runtime and the installer, builds the image and runs the
 # end-to-end tests against it: the runtime's with a stub box and no network,
-# and the real box built from the template. On main, an image that passed
-# both is pushed as latest and as the commit.
+# the real box built from the template, and a box in a tailnet of its own
+# control server. On main, an image that passed them all is pushed as latest
+# and as the commit.
 #
 # amd64 only. arm64 would need an arm64 runner (ubuntu-24.04-arm) running the
 # same job, each pushing a per-architecture tag, and a final job joining them
@@ -58,8 +59,22 @@ jobs:
       - run: zstd -dc image.tar.zst | docker load
       - run: kit/runtime/tests/box.sh denbox-test-image
 
+  # Boxes in a tailnet: Headscale, a box and a Tailscale client on a private
+  # Docker network, the boxes built from kit/runtime/tests/tailnet.
+  tailscale:
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: image
+      - run: zstd -dc image.tar.zst | docker load
+      - run: kit/runtime/tests/tailscale.sh denbox-test-image
+
   push:
-    needs: box
+    needs: [box, tailscale]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
