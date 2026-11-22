@@ -13,7 +13,7 @@ then in code.
 | Layer | Where | Holds | Changes |
 | --- | --- | --- | --- |
 | Image | `image/`, public on ghcr.io | Debian, Nix, git, tini, a seed copy of the runtime | when Nix or the base moves |
-| Kit | `kit/`, a flake input of every environment | Home Manager modules, packages, `denbox-api`, the runtime, browser parts | often |
+| Kit | `kit/`, a flake input of every environment | Home Manager modules, packages, `denbox-api`, the runtime | often |
 | Environment | its own repository, public or private | which boxes exist, which options each sets, its own modules | when its owner wants |
 
 The image carries no application and no topology. Everything a box runs comes
@@ -38,8 +38,7 @@ configuration names an architecture.
         imports = [ ./personal.nix ];
         denbox.t3.enable = true;
         denbox.agents.claude.enable = true;
-        denbox.agents.instructions = ./agent/AGENTS.md;
-        denbox.agents.skills = ./agent/skills;
+        home.file.".claude/CLAUDE.md".source = ./agent/AGENTS.md;
       };
       tools = { };   # no agents: shell, tools, the API
     };
@@ -55,6 +54,16 @@ on top of the kit's modules:
 - `<box>/activate` activates it.
 - `<box>.follow` is the value of `denbox.follow` (see Sync).
 - `<box>.config` is the evaluated configuration, for checks and debugging.
+
+Nix looks every attribute up under `legacyPackages.<system>` before the top
+level. A flake with other outputs that must evaluate without the kit builds
+that level itself and calls `mkBoxes` only for `boxes`:
+
+```nix
+legacyPackages = nixpkgs.lib.genAttrs systems (system: {
+  boxes = (denbox.lib.mkBoxes { personal = ./personal.nix; }).${system}.boxes;
+});
+```
 
 `mkBoxes` defaults the user to `root` with home `/root` and
 `home.stateVersion` to `26.05`; the box's module overrides any of them. It
@@ -74,25 +83,28 @@ Every option lives under `denbox.`. Nothing is on unless the table says so.
 | `denbox.api.enable` | `true` | run `denbox-api` |
 | `denbox.api.address` | `127.0.0.1:48099` | where it listens |
 | `denbox.api.interface` | `eth0` | interface whose traffic the panel shows |
-| `denbox.browser.parts.<name>` | `{ }` | browser code served to the extension (see Browser) |
 | `denbox.t3.enable` | `false` | T3 Code as a service |
 | `denbox.t3.package` | kit's pin | override to patch or repin |
 | `denbox.t3.port`, `.host`, `.projects`, `.settings` | `3773`, `0.0.0.0`, `~/Projects`, `{ }` | `.settings` is merged into T3's `settings.json` on start |
 | `denbox.agents.claude.enable`, `.package` | `false`, kit's pin | Claude Code |
+| `denbox.agents.claude.mcpServers` | `{ }` | merged into `mcpServers` of `~/.claude.json` on activation |
 | `denbox.agents.codex.enable`, `.package` | `false`, kit's pin | Codex |
-| `denbox.agents.instructions` | `null` | a Markdown file given to every enabled agent as its user-wide instructions |
-| `denbox.agents.extraInstructions` | `""` | lines appended to it |
-| `denbox.agents.skills` | `null` | a directory of skills given to every enabled agent |
-| `denbox.agents.mcpServers` | `{ }` | MCP servers registered with every enabled agent |
+| `denbox.agents.codex.config` | `{ }` | Codex configuration, passed as one `-c` override per leaf value |
 | `denbox.secrets.provider` | passthrough | see Secrets |
 | `denbox.follow` | `{ }` | flake input name to flake reference (see Sync) |
 
-An MCP server is `{ command, args, env }` or `{ url, headers }`. Claude gets
-them merged into `~/.claude.json` on activation; Codex gets them as `-c`
-overrides on its command line, so `~/.codex/config.toml` stays Codex's own.
+The kit installs an agent, starts it through the secrets provider and merges
+configuration into the files the agent owns. It does not model an agent's
+configuration: both options above are free-form and take whatever keys that
+agent understands. Merging is per key, never per table, so a key the kit sets
+leaves its neighbours alone, and so does a key the user sets by hand.
+Instructions, skills and other files an agent reads are the environment's own
+`home.file` entries; the kit writes none of them.
 
 An agent that needs a proxy, a wrapper or another build overrides its
-`.package`. The kit knows nothing about a particular proxy, vault or cluster.
+`.package`. Every module receives the argument `kit`, the kit's packages for
+the box's system (`kit.claude`, `kit.codex`, `kit.t3`, ...), to wrap or patch.
+The kit knows nothing about a particular proxy, vault or cluster.
 
 ## Layout in a box
 
@@ -112,6 +124,7 @@ One command, `denbox`, replaces the set of commands the predecessor had:
     denbox sync [--once]                  fetch, build, activate, reconcile services
     denbox service status [NAME]
     denbox service start|stop|restart NAME
+    denbox service reconcile              make the supervised services match ~/.config/denbox/services now
     denbox service logs NAME [-f] [-n N]
     denbox shell [ARGS]                   the configured shell, with the secrets of consumer `shell`
 
@@ -162,18 +175,21 @@ a public one. 1Password is not part of the bootstrap.
 A failed fetch, build or activation keeps the box as it was. A box restarts
 from its last applied state without network.
 
-A box without `follow` skips steps 3 and 4 while the revision is the one it
-applied (it still reconciles). A box with `follow` builds at every sync with
-`--refresh`, so Nix looks at the followed branches again, and activates only
-when the build's store path changed. After an activation, at most once a day,
-the runtime keeps three generations of the user's profiles and collects the
-store.
+Steps 3 and 4 are skipped while nothing changed: the revision of the
+environment is the one applied and every followed reference still resolves to
+the revision it had then. Resolving a reference asks its host for the current
+revision and evaluates nothing, so an idle box costs a fetch per sync. It still
+reconciles. After an activation, at most once a day, the runtime keeps three
+generations of the user's profiles and collects the store.
 
 `denbox.follow` is how a kit update reaches boxes without a commit to every
 environment. `denbox.follow.denbox = "github:riprsa/denbox";` makes the box
 build against the kit's current `main` at every sync, whatever the
 environment's `flake.lock` says. Without it the lock decides, and a kit update
 arrives when the environment updates its lock. The default is empty.
+
+Following is for a kit that has settled. It gives up the one step where a
+person looks at a kit change before a particular box takes it; see Trust.
 
 The runtime is part of the box it builds: activation installs it as
 `~/.nix-profile/bin/denbox`. The image starts that one when it exists and its
@@ -197,25 +213,48 @@ own program (a secrets broker, sops, a file reader).
 ## denbox-api
 
 A small Go server inside the box, reached only through the box's private front
-door. Every request must carry the header `x-denbox-api: 1`; a web page cannot
-send it cross-origin without a preflight the server never answers.
+door. It serves data and takes commands about the box. It never serves code.
+Every request must carry the header `x-denbox-api: 1`; a web page cannot send
+it cross-origin without a preflight the server never answers. The header stops
+other pages from calling the API; it does not authenticate anyone.
 
 | Route | Does |
 | --- | --- |
 | `GET /state` | `{ system, services, ports }`; a failing section is `{"state":"unavailable","reason":"..."}` |
 | `POST /services/restart` | `{ "name": "..." }` |
 | `POST /services/toggle` | `{ "name": "...", "on": true }`, optional services only |
-| `GET /bundle.json` | the browser bundle of this box; 404 when it has no parts |
 
 It talks to the supervisor only through `denbox service ...`.
 
+## Trust
+
+A box is not trusted by anything outside it. Its agents run as root, act
+without asking and read text from the web, so whatever a box serves may have
+been written by someone else. Two rules follow.
+
+- **Nothing outside a box runs code a box hands it.** The browser extension
+  shows a box's data and sends it commands; the code it runs comes from Git.
+- **Code reaches a box or a browser only through a merge.** A box builds what
+  is on a branch of the environment (and of the kit, when it follows it). The
+  extension runs bundles from a branch of a repository. That is a gate only
+  while the branch is protected and no credential inside a box can push to it
+  or merge into it. Give agents an account of their own, without that right.
+
 ## Browser
 
-`extension/` is a browser extension that holds no feature of its own. It has a
-loader, an options page and the permissions features need. Its options take
-one value, the address of a box's API. The loader fetches
-`<address>/bundle.json` every 5 minutes with the `x-denbox-api` header and
-runs it.
+`extension/` is a browser extension with its own manifest key. It holds a
+loader, an options page, the panel and the permissions features need. Its
+options hold two separate things:
+
+- **The box address**: where `denbox-api` answers. The panel, a page of the
+  extension itself, shows that box's state, services and ports from `/state`
+  and sends restarts and toggles. What the box returns is data: the panel puts
+  it into the page as text, never as markup or code.
+- **Sources**: a list of URLs, each with an optional token, each returning one
+  bundle. A source is a file in a Git repository on a protected branch, for
+  example a raw file URL of the environment's `main`. The loader fetches every
+  source every 5 minutes and runs what they hold. It refuses a source on the
+  same origin as the box address.
 
 A bundle is
 
@@ -224,17 +263,16 @@ A bundle is
 ```
 
 Each part starts on its own; one that throws does not stop the others. A
-bundle that fails to parse leaves the previous one running.
+source that fails to load or parse leaves its previous bundle running. A part
+name is unique across sources; a second part of the same name is reported and
+not started. A part without `background` leaves the key out; `content` and
+`pages` may be empty. A part's code gets the box address and a helper that
+calls the box's API, and treats the answers as data.
 
-`denbox.browser.parts.<name>` in a box has the same shape as a part, with file
-paths in place of text. A part without `background` leaves the key out;
-`content` and `pages` may be empty. The kit builds the bundle from all parts at
-build time and `denbox-api` serves it. The kit ships the part `panel` (the box's state,
-services and ports, from `/state`), on when `denbox.api.enable` is. An
-environment adds its own parts next to it.
-
-The extension keeps the manifest key of the extension it replaces, so its id
-and the origins that trust it do not change.
+`denbox.lib.mkBundle pkgs { <name> = { background, content, pages }; }` builds
+a bundle from files, the same shape with paths in place of text. A repository
+that is a source commits the built file, and its CI fails when the file is not
+what its parts build.
 
 ## Hosts
 
@@ -256,27 +294,15 @@ private repository, a token. It pulls the public image and starts Compose.
 ## Repository
 
 ```
-flake.nix, flake.lock     lib.mkBoxes, homeManagerModules.default, packages, checks, templates.default
+flake.nix, flake.lock     lib.mkBoxes, lib.mkBundle, homeManagerModules.default, packages, checks, templates.default
 kit/go.mod, api/, cmd/    denbox-api
 kit/nix/modules/          one file per option group
 kit/nix/packages/         pins and builds: denbox-api, the browser bundle, t3, claude, codex, runtime
 kit/nix/checks/           flake checks beyond the package builds
 kit/runtime/              the denbox command
-kit/browser/<part>/       sources of the parts the kit ships
-extension/                the browser extension
+extension/                the browser extension, the panel included
 image/                    Dockerfile and its init
 deploy/, install.sh       standard Compose deployment and installer
 template/                 what `nix flake init -t github:riprsa/denbox` writes
 docs/                     this file
 ```
-
-## Build order
-
-1. `denbox-api`, the services module, checks, CI.
-2. The extension and the `panel` part.
-3. The remaining kit modules, `mkBoxes`, the template.
-4. The runtime, the image, the installer, an end-to-end test that starts a box
-   from the template in CI.
-5. The first environments move over. A box is cut over by installing it next
-   to the old one, checking it, then switching the front door.
-6. Baked images, a binary cache, the NixOS module.
