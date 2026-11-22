@@ -1,0 +1,382 @@
+#!/usr/bin/env bash
+# The runtime of a box. See docs/design.md, "Layout in a box" and "Sync".
+#
+#   denbox supervise                       PID 1 after tini: s6 over the services and the sync loop
+#   denbox sync [--once]                   fetch, build, activate, reconcile services
+#   denbox service status [NAME]
+#   denbox service start|stop|restart NAME
+#   denbox service logs NAME [-f] [-n N]
+#   denbox shell [ARGS]                    the configured shell, bash without it
+#
+# Every path comes from a variable, so tests point the runtime at temporary
+# directories. The defaults are the box's layout.
+set -euo pipefail
+umask 077
+
+# The package sets this to the bin directories of the runtime's own tools.
+tools='' # set by the package
+user_path=$PATH
+[[ -z $tools ]] || PATH=$tools:$PATH
+
+state=${DENBOX_STATE:-$HOME/.local/state/denbox}
+run=${DENBOX_RUN:-/run/denbox}
+config=${DENBOX_CONFIG:-$HOME/.config/denbox}
+bootstrap_file=${DENBOX_BOOTSTRAP:-/run/secrets/denbox_bootstrap}
+token_file=${DENBOX_GIT_TOKEN:-/run/secrets/denbox_git_token}
+profile_runtime=${DENBOX_PROFILE_RUNTIME:-$HOME/.nix-profile/bin/denbox}
+# Store maintenance after an activation: generations kept, seconds between runs.
+gc_keep=${DENBOX_GC_KEEP:-3}
+gc_interval=${DENBOX_GC_INTERVAL:-86400}
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+libexec=$(dirname "$self")
+services=$run/services
+logs=$state/logs
+sync_service=denbox-sync
+name_pattern='^[a-z][a-z0-9-]*$'
+
+usage() {
+  sed -n '3,8s/^# //p' "$self" >&2
+  exit 64
+}
+
+# write_file PATH MODE: replaces PATH with stdin, atomically.
+write_file() {
+  local temporary
+  temporary=$(mktemp "$1.XXXXXX")
+  cat > "$temporary"
+  chmod "$2" "$temporary"
+  mv -f "$temporary" "$1"
+}
+
+# supervise: lays out the s6 scan directory, restores the last applied
+# services without network, and becomes s6-svscan.
+supervise() {
+  mkdir -p "$services" "$run/bin" "$state"
+  chmod 0700 "$run"
+  # The services' entry to the runtime: the box's own copy once activation
+  # installed it, this one before. A runtime update thus reaches every
+  # wrapper without rewriting it.
+  write_file "$run/bin/denbox" 0755 <<SCRIPT
+#!/bin/sh
+if [ -x "$profile_runtime" ]; then exec "$profile_runtime" "\$@"; fi
+exec "$self" "\$@"
+SCRIPT
+  service_dir "$sync_service"
+  write_file "$services/$sync_service/command" 0755 <<SCRIPT
+#!/bin/sh
+exec "$run/bin/denbox" sync
+SCRIPT
+  rm -f "$services/$sync_service/down"
+  reconcile || echo 'Reconciling the cached services failed; the shell stays available' >&2
+  # Services see the caller's PATH first and the runtime's tools after it;
+  # s6-svscan finds s6-supervise there.
+  PATH=$user_path${tools:+:$tools} exec s6-svscan "$services"
+}
+
+# service_dir NAME: writes the s6 wrapper files of a service. ./command is
+# the service's own executable; run sends its stderr to the log too.
+service_dir() {
+  local directory=$services/$1
+  mkdir -p "$directory/log"
+  printf '#!/bin/sh\nexec 2>&1\nexec ./command\n' | write_file "$directory/run" 0755
+  # Exit code 256 is a stop by signal; a crash waits a little before s6 restarts it.
+  # shellcheck disable=SC2016
+  printf '#!/bin/sh\n[ "$1" = 256 ] || sleep 5\n' | write_file "$directory/finish" 0755
+  printf '#!/bin/sh\nexec "%s" log-writer "%s"\n' "$run/bin/denbox" "$1" | write_file "$directory/log/run" 0755
+  printf '30000\n' > "$directory/timeout-kill"
+}
+
+# log_writer NAME: the log/run of every service. Keeps a copy on stdout for
+# the container's log; 10 archives of 1 MB with ISO 8601 timestamps.
+log_writer() {
+  local directory=$logs/$1
+  mkdir -p "$directory"
+  chmod 0700 "$logs" "$directory"
+  exec s6-log -b -- 1 n10 s1000000 T "$directory"
+}
+
+# reconcile: makes the supervised services match $config/services. A service
+# restarts only when its executable changed.
+reconcile() {
+  local source=$config/services service name target fingerprint previous running
+  mkdir -p "$services"
+  exec 7>"$run/services.lock"
+  flock -x 7
+  shopt -s nullglob
+  for service in "$services"/*; do
+    name=${service##*/}
+    [[ -f $service/.managed && ! -x $source/$name/run ]] || continue
+    touch "$service/down"
+    if s6-svok "$service" 2>/dev/null; then
+      s6-svc -wD -T 35000 -dx "$service" || true
+      for ((attempt = 0; attempt < 50; attempt++)); do
+        s6-svok "$service" 2>/dev/null || break
+        sleep .1
+      done
+      if s6-svok "$service" 2>/dev/null; then
+        echo "Service $name has not stopped; removal is retried at the next sync" >&2
+        continue
+      fi
+    fi
+    # s6-log exits on TERM; its supervisor must not outlive the directory.
+    if s6-svok "$service/log" 2>/dev/null; then s6-svc -wD -T 5000 -dx "$service/log" || true; fi
+    rm -rf -- "$service"
+  done
+  for service in "$source"/*; do
+    name=${service##*/}
+    [[ $name =~ $name_pattern && $name != "$sync_service" && -x $service/run ]] || continue
+    target=$(readlink -f "$service")
+    fingerprint=$target
+    previous=$(cat "$services/$name/.managed" 2>/dev/null || true)
+    [[ $fingerprint != "$previous" ]] || continue
+    running=false
+    if s6-svok "$services/$name" 2>/dev/null; then
+      running=true
+      s6-svc -wD -T 35000 -d "$services/$name" || true
+    fi
+    # Wrapper files live under $run, never in the read-only store: s6 writes
+    # supervise/ next to them. log/ exists before s6-svscan sees the directory.
+    service_dir "$name"
+    ln -sfn "$target/run" "$services/$name/command"
+    [[ ! -x $target/finish ]] || ln -sfn "$target/finish" "$services/$name/finish"
+    printf '%s\n' "$fingerprint" > "$services/$name/.managed"
+    rm -f "$services/$name/down"
+    if [[ $running == true ]]; then s6-svc -u "$services/$name"; fi
+  done
+  shopt -u nullglob
+  if [[ -p $services/.s6-svscan/control ]]; then s6-svscanctl -an "$services"; fi
+  exec 7>&-
+}
+
+# service ACTION [NAME] [OPTIONS]: the supervisor's interface, used by people
+# and by denbox-api. status prints "NAME: <s6-svstat line>" per service.
+service() {
+  local action=${1:-status} name=${2:-}
+  if [[ -n $name ]]; then
+    # Logs stay readable after a service is removed.
+    [[ $name =~ $name_pattern && (-d $services/$name || ($action == logs && -d $logs/$name)) ]] ||
+      { echo "Unknown service: $name" >&2; exit 64; }
+  fi
+  case $action in
+    status)
+      local directory
+      for directory in "$services"/${name:-*}; do
+        [[ -d $directory ]] || continue
+        printf '%s: ' "${directory##*/}"
+        s6-svstat "$directory"
+      done ;;
+    start|stop|restart)
+      [[ -n $name ]] || usage
+      case $action in
+        start) s6-svc -u "$services/$name" ;;
+        stop) s6-svc -wD -T 35000 -d "$services/$name" ;;
+        # One request, so s6 brings the service back even when the caller runs
+        # inside it and dies with it. -r before -u: a down service starts once.
+        restart) s6-svc -wr -T 40000 -ru "$services/$name" ;;
+      esac ;;
+    logs)
+      [[ -n $name ]] || usage
+      shift 2
+      local lines=100 follow=()
+      while (($#)); do
+        case $1 in
+          -f) follow=(-F) ;;
+          -n) [[ ${2:-} =~ ^[0-9]+$ ]] || usage; lines=$2; shift ;;
+          *) usage ;;
+        esac
+        shift
+      done
+      # -F follows "current" across rotation.
+      exec tail -n "$lines" "${follow[@]}" "$logs/$name/current" ;;
+    *) usage ;;
+  esac
+}
+
+# read_bootstrap: prints the path of the last valid bootstrap. A file the host
+# broke leaves the previous one in use.
+read_bootstrap() {
+  local cache=$state/bootstrap.json candidate
+  candidate=$(mktemp "$state/.bootstrap.XXXXXX")
+  if jq -e '
+       .version == 2 and
+       (.repository | type == "string" and length > 0) and
+       (.ref | type == "string" and length > 0) and
+       (.box | type == "string" and test("^[A-Za-z0-9_-]+$")) and
+       ((.sync_interval // 300) | type == "number" and floor == . and . >= 30 and . <= 86400) and
+       ((.apply_timeout // 1800) | type == "number" and floor == . and . >= 30 and . <= 86400) and
+       ((.git_username // "oauth2") | type == "string" and test("^[A-Za-z0-9_.@-]+$"))
+     ' "$bootstrap_file" > /dev/null 2>&1 &&
+     git check-ref-format "refs/heads/$(jq -r .ref "$bootstrap_file")" &&
+     cp "$bootstrap_file" "$candidate"; then
+    mv -f "$candidate" "$cache"
+  else
+    rm -f "$candidate"
+    echo "The bootstrap $bootstrap_file is missing or not valid; the last valid one stays in use" >&2
+  fi
+  [[ -s $cache ]] || { echo 'No valid bootstrap yet' >&2; return 75; }
+  printf '%s\n' "$cache"
+}
+
+# git_fetch ARGS: git without the user's or the system's configuration, with
+# the token through askpass and a time limit.
+git_fetch() {
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
+    GIT_ASKPASS=$libexec/askpass DENBOX_GIT_TOKEN=$token_file \
+    timeout --foreground --kill-after=5s 120s \
+    git -c credential.helper= -c http.followRedirects=false "$@"
+}
+
+# sync_once: one pass of the four steps of the design's Sync section. Any
+# failure exits before the applied state changes.
+sync_once() {
+  local cache repository ref box deadline revision snapshot follow fingerprint candidate applied started remaining
+  local overrides=() refresh=()
+  cache=$(read_bootstrap)
+  repository=$(jq -r .repository "$cache")
+  ref=$(jq -r .ref "$cache")
+  box=$(jq -r .box "$cache")
+  deadline=$(jq -r '.apply_timeout // 1800' "$cache")
+  jq -r '.sync_interval // 300' "$cache" > "$state/interval"
+  DENBOX_GIT_USERNAME=$(jq -r '.git_username // "oauth2"' "$cache")
+  export DENBOX_GIT_USERNAME
+
+  # 1. Fetch the ref and unpack it into a snapshot without .git.
+  [[ -d $state/source.git ]] || git init -q --bare "$state/source.git"
+  git_fetch --git-dir="$state/source.git" fetch -q --depth=1 "$repository" "refs/heads/$ref"
+  revision=$(git --git-dir="$state/source.git" rev-parse FETCH_HEAD)
+  snapshot=$state/snapshots/$revision
+  if [[ ! -d $snapshot ]]; then
+    mkdir -p "$state/snapshots"
+    local incoming
+    incoming=$(mktemp -d "$state/snapshots/.incoming.XXXXXX")
+    git --git-dir="$state/source.git" archive "$revision" | tar -x -C "$incoming"
+    mv "$incoming" "$snapshot"
+  fi
+
+  # 2. Read follow.
+  follow=$(nix eval --no-write-lock-file --json "path:$snapshot#boxes.$box.follow")
+  jq -e 'type == "object" and all(to_entries[];
+           (.key | test("^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$")) and (.value | type == "string" and length > 0))' \
+    <<<"$follow" > /dev/null || { echo "boxes.$box.follow is not an attribute set of flake references" >&2; return 65; }
+  while IFS= read -r -d '' entry; do overrides+=(--override-input "${entry%%=*}" "${entry#*=}"); done \
+    < <(jq -j 'to_entries[] | "\(.key)=\(.value)\u0000"' <<<"$follow")
+  follow=$(jq -cS . <<<"$follow")
+
+  # A box that follows nothing changes only with the revision: skip the build.
+  fingerprint="$revision $box $follow"
+  if [[ $follow == '{}' && -e $state/applied && $fingerprint == "$(cat "$state/fingerprint" 2>/dev/null)" ]]; then
+    reconcile
+    return 0
+  fi
+  # Followed references are branches: look at them again on every sync.
+  [[ $follow == '{}' ]] || refresh=(--refresh)
+
+  # 3. Build.
+  echo "Building boxes.$box at $revision"
+  started=$SECONDS
+  timeout --foreground --kill-after=10s "$deadline" \
+    nix build --no-write-lock-file --out-link "$state/candidate" "${refresh[@]}" "${overrides[@]}" "path:$snapshot#boxes.$box"
+  candidate=$(readlink -f "$state/candidate")
+  applied=$(readlink -f "$state/applied" 2>/dev/null || true)
+
+  # 4. Activate, then reconcile the services.
+  if [[ $candidate != "$applied" ]]; then
+    remaining=$((deadline - (SECONDS - started)))
+    ((remaining > 0)) || remaining=1
+    echo "Activating $candidate"
+    timeout --foreground --kill-after=10s "$remaining" "$candidate/activate"
+    # A GC root for the applied box, under its own name.
+    nix build --out-link "$state/applied" "$candidate"
+  fi
+  rm -f "$state/candidate"
+  printf '%s\n' "$fingerprint" > "$state/fingerprint"
+  printf '%s\n' "$revision" > "$state/revision"
+  reconcile
+
+  # Old snapshots are in the store already, as the source of their builds.
+  local old
+  for old in "$state"/snapshots/*; do
+    [[ $old == "$snapshot" ]] || rm -rf -- "$old"
+  done
+  maintain_store || echo 'Store maintenance failed; it is retried after the next activation' >&2
+}
+
+# maintain_store: at most once per gc_interval, keeps gc_keep generations of
+# the user's profiles and collects the store. Roots outside them, such as the
+# image's seed, stay.
+maintain_store() {
+  local now last=0 profile
+  ((gc_interval > 0)) || return 0
+  now=$(date +%s)
+  [[ ! -f $state/last-gc ]] || read -r last < "$state/last-gc"
+  [[ $last =~ ^[0-9]+$ ]] || last=0
+  ((now - last >= gc_interval)) || return 0
+  echo "Maintaining the store: keeping $gc_keep generations"
+  # Home Manager and nix profile use either location, depending on Nix's settings.
+  for profile in "${XDG_STATE_HOME:-$HOME/.local/state}"/nix/profiles/{home-manager,profile} \
+    "/nix/var/nix/profiles/per-user/${USER:-$(id -un)}"/{home-manager,profile}; do
+    [[ ! -L $profile ]] || nix-env --profile "$profile" --delete-generations "+$gc_keep" || return
+  done
+  nix store gc || return
+  printf '%s\n' "$now" > "$state/last-gc"
+}
+
+# sync_loop [--once]: the reconciler. Only one runs at a time; a failure keeps the
+# box as it was. The loop exits when an activation changed the runtime, so s6
+# starts the new one.
+sync_loop() {
+  local once=false result runtime interval
+  case ${1:-} in
+    '') ;;
+    --once) once=true ;;
+    *) usage ;;
+  esac
+  mkdir -p "$state" "$run"
+  exec 8>"$run/sync.lock"
+  flock -n 8 || { echo 'A sync is already running' >&2; exit 75; }
+  trap 'trap "" TERM INT; kill -TERM -- -$$ 2>/dev/null || true; wait; exit 0' TERM INT
+  while :; do
+    printf '%s syncing\n' "$(date -u +%FT%TZ)" > "$state/status"
+    runtime=$(readlink -f "$profile_runtime" 2>/dev/null || true)
+    set +e
+    # Descendants must not hold the lock after the pass.
+    (set -e; sync_once) 8>&- &
+    wait "$!"
+    result=$?
+    set -e
+    if ((result == 0)); then
+      printf '%s applied %s\n' "$(date -u +%FT%TZ)" "$(cat "$state/revision" 2>/dev/null)" > "$state/status"
+    else
+      printf '%s failed exit=%s; the box stays as it was\n' "$(date -u +%FT%TZ)" "$result" | tee "$state/status" >&2
+    fi
+    [[ $once == false ]] || exit "$result"
+    if [[ $(readlink -f "$profile_runtime" 2>/dev/null || true) != "$runtime" ]]; then
+      echo 'The runtime changed; s6 starts the new one'
+      exit 0
+    fi
+    interval=300
+    [[ ! -f $state/interval ]] || read -r interval < "$state/interval"
+    sleep "$interval" &
+    wait "$!" || true
+  done
+}
+
+# shell [ARGS]: the shell the tools module configured, bash before the first
+# activation or without it. It runs with the caller's PATH.
+shell() {
+  PATH=$user_path
+  if [[ -x $config/shell ]]; then exec "$config/shell" "$@"; fi
+  exec bash "$@"
+}
+
+command=${1:-}
+[[ $# == 0 ]] || shift
+case $command in
+  supervise) [[ $# == 0 ]] || usage; supervise ;;
+  sync) sync_loop "$@" ;;
+  service) service "$@" ;;
+  shell) shell "$@" ;;
+  log-writer) [[ $# == 1 && $1 =~ $name_pattern ]] || usage; log_writer "$1" ;;
+  *) usage ;;
+esac

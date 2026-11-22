@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# GIT_ASKPASS of denbox sync: the username from DENBOX_GIT_USERNAME, the
+# password from the token file DENBOX_GIT_TOKEN, without its line end.
+set -euo pipefail
+case ${1:-} in
+  *Username*) printf '%s\n' "${DENBOX_GIT_USERNAME:-oauth2}" ;;
+  *Password*) tr -d '\r\n' < "${DENBOX_GIT_TOKEN:?}"; echo ;;
+  *) exit 1 ;;
+esac

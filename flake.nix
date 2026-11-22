@@ -57,6 +57,7 @@
         t3 = pkgs.callPackage ./kit/nix/packages/t3.nix { };
         codex = pkgs.callPackage ./kit/nix/packages/codex.nix { };
         claude = pkgs.callPackage ./kit/nix/packages/claude.nix { };
+        runtime = pkgs.callPackage ./kit/nix/packages/runtime.nix { };
         default = denbox-api;
       });
 
