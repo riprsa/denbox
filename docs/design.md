@@ -258,8 +258,10 @@ options hold two separate things:
 - **Sources**: a list of URLs, each with an optional token, each returning one
   bundle. A source is a file in a Git repository on a protected branch, for
   example a raw file URL of the environment's `main`. The loader fetches every
-  source every 5 minutes and runs what they hold. It refuses a source on the
-  same host as the box address, on any port, and a source that redirects there.
+  source every 5 minutes and runs what they hold. It accepts a source only
+  on a short list of Git hosts kept in its code, and refuses one that
+  redirects off that list. The list says what is allowed, not what is
+  refused: a box answers to many names, and none of them is a Git host.
 
 A bundle is
 

@@ -19,7 +19,7 @@ function row(...cells) {
 function sourceRow({ url = "", token = "" } = {}) {
   const line = document.createElement("div");
   line.className = "row source";
-  const urlInput = Object.assign(document.createElement("input"), { type: "url", value: url, placeholder: "https://example.com/bundle.json" });
+  const urlInput = Object.assign(document.createElement("input"), { type: "url", value: url, placeholder: "https://raw.githubusercontent.com/OWNER/REPO/main/bundle.json" });
   const tokenInput = Object.assign(document.createElement("input"), { type: "password", value: token, placeholder: "token (optional)" });
   const remove = Object.assign(document.createElement("button"), { textContent: "Remove" });
   remove.addEventListener("click", () => line.remove());
@@ -32,14 +32,14 @@ function showSources(sources) {
 }
 
 // The sources as typed, or the reason they cannot be saved.
-function readSources(address) {
+function readSources() {
   const sources = [];
   for (const line of field("sources").children) {
     const [urlInput, tokenInput] = line.querySelectorAll("input");
     const url = urlInput.value.trim();
     const token = tokenInput.value.trim();
     if (!url) continue;
-    const error = sourceError(url, address);
+    const error = sourceError(url);
     if (error) return { error: `${url} ${error}` };
     if (sources.some((source) => source.url === url)) return { error: `${url} is listed twice` };
     sources.push(token ? { url, token } : { url });
@@ -88,7 +88,7 @@ field("save").addEventListener("click", () => {
     saved.textContent = "Not saved: the box address must be an http or https URL";
     return;
   }
-  const { sources, error } = readSources(address);
+  const { sources, error } = readSources();
   if (error) {
     saved.className = "bad";
     saved.textContent = `Not saved: ${error}`;

@@ -31,14 +31,14 @@ async function read() {
 // Fetches one source. Without a token the request carries the profile's
 // cookies for that host; with one it carries only the token. A redirect is held
 // to the same rules as the source itself.
-async function fetchSource({ url, token }, address) {
+async function fetchSource({ url, token }) {
   // no-cache revalidates through the HTTP cache, so an unchanged file is not downloaded again.
   const response = await fetch(url, {
     cache: "no-cache",
     credentials: token ? "omit" : "include",
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
-  const landed = response.url && response.url !== url ? sourceError(response.url, address) : undefined;
+  const landed = response.url && response.url !== url ? sourceError(response.url) : undefined;
   if (landed) throw new Error(`redirected to ${response.url}, which ${landed}`);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return await response.text();
@@ -48,7 +48,7 @@ async function fetchSource({ url, token }, address) {
 // parse, keeps its previous bundle. Bundles of removed or refused sources are
 // dropped. Any change is stored and the extension reloads into it.
 async function runCheck() {
-  const { address, sources, bundles } = await read();
+  const { sources, bundles } = await read();
   if (holds.size) {
     const error = `Update waits: ${holdReasons()}`;
     const status = Object.fromEntries(sources.map(({ url }) => [url, { checkedAt: Date.now(), error }]));
@@ -59,11 +59,11 @@ async function runCheck() {
   await Promise.all(
     sources.map(async (source) => {
       const { url } = source;
-      const refused = sourceError(url, address);
+      const refused = sourceError(url);
       if (refused) return void (status[url] = { checkedAt: Date.now(), error: `Refused: ${refused}` });
       if (bundles[url] !== undefined) next[url] = bundles[url];
       try {
-        const text = await fetchSource(source, address);
+        const text = await fetchSource(source);
         if (text !== bundles[url]) {
           parseBundle(text);
           next[url] = text;
@@ -120,7 +120,7 @@ function backgroundDenbox(part, address) {
 // Starts every part at once; each one's outcome lands in denbox:started as it
 // settles, so a part that throws, or never finishes starting, holds up no other.
 async function startParts({ address, sources, bundles }) {
-  const entries = plan(address, sources, bundles);
+  const entries = plan(sources, bundles);
   const started = {
     at: Date.now(),
     parts: entries.map(({ source, name, error }) => (error ? { source, name, state: "skipped", error } : { source, name, state: "starting" })),
