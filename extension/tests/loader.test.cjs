@@ -46,12 +46,12 @@ test("parseBundle accepts version 1 and rejects other shapes", () => {
   }
 });
 
-test("a source must be https and off the box's origin", () => {
+test("a source must be https and off the box's host", () => {
   assert.equal(sourceError(A, ADDRESS), undefined);
-  assert.equal(sourceError("https://box.example.com:8443/b.json", ADDRESS), undefined, "another port is another origin");
+  assert.match(sourceError("https://box.example.com:8443/b.json", ADDRESS), /box's host/, "every port of the box is the box");
   assert.match(sourceError("http://git.example.com/b.json", ADDRESS), /https/);
-  assert.match(sourceError("https://box.example.com/files/b.json", ADDRESS), /box's origin/);
-  assert.match(sourceError("https://box.example.com/b.json", "https://box.example.com"), /box's origin/);
+  assert.match(sourceError("https://box.example.com/files/b.json", ADDRESS), /box's host/);
+  assert.match(sourceError("https://box.example.com/b.json", "https://box.example.com"), /box's host/);
   assert.match(sourceError("nope", ADDRESS), /not a URL/);
 });
 
@@ -112,7 +112,7 @@ test("a second part of the same name is reported and not started", async () => {
   assert.equal(state(store, B, "other").state, "running");
 });
 
-test("a stored source on the box's origin is refused and its bundle dropped", async () => {
+test("a stored source on the box's host is refused and its bundle dropped", async () => {
   const onBox = "https://box.example.com/api/parts.json";
   const text = bundle({ evil: { background: "globalThis.ran = true;" } });
   const { store, ready, requests, context } = loadBackground({ storage: stored([onBox], { [onBox]: text }), respond: serve({ [onBox]: text }) });
@@ -123,7 +123,7 @@ test("a stored source on the box's origin is refused and its bundle dropped", as
   assert.match(store["denbox:status"][onBox].error, /Refused/);
 });
 
-test("a redirect to the box's origin is refused", async () => {
+test("a redirect to the box's host is refused", async () => {
   const { store, ready } = loadBackground({
     storage: stored([A]),
     respond: () => ({ body: bundle({ evil: {} }), url: `${ADDRESS}/parts.json` }),

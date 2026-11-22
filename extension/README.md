@@ -46,8 +46,8 @@ every 5 minutes and on **Save and check**.
   `https://raw.githubusercontent.com/example/environment/main/browser/bundle.json`.
   A box, anything an agent can write to, or a branch agents can push to is not
   a source: the code would run in every signed-in session of the profile.
-- **Refused.** A source must be `https:` and must not be on the origin of the
-  box address. The options page will not save such a source, and the loader
+- **Refused.** A source must be `https:` and must not be on the host of the
+  box address, on any port. The options page will not save such a source, and the loader
   skips one that is already stored. A redirect is held to the same rules.
 - **Login.** Without a token the request carries the profile's cookies for the
   source's host, so a file behind the profile's login works. With a token it

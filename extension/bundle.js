@@ -46,9 +46,9 @@ function parseBundle(text) {
 }
 
 // Why `url` cannot be a source, or undefined when it can. A source is https and
-// not on the box's origin: the box supplies data, never code. The loader and
-// the options page both ask, so a source stored before a change of the box
-// address is refused too.
+// not on the box's host, whatever the port: the box supplies data, never code.
+// The loader and the options page both ask, so a source stored before a change
+// of the box address is refused too.
 function sourceError(url, address) {
   let source;
   try {
@@ -64,7 +64,7 @@ function sourceError(url, address) {
   } catch {
     return "the box address is not a URL";
   }
-  if (source.origin === box.origin) return "is on the box's origin, and the box must not supply code";
+  if (source.hostname === box.hostname) return "is on the box's host, and the box must not supply code";
   return undefined;
 }
 
