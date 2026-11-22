@@ -5,7 +5,7 @@ Code and coding agents, as Home Manager modules. The box follows a Git
 repository you own, the environment, and applies every new commit on its own.
 Today a box runs as a Docker container.
 
-![How denbox works: what a box is made of and what happens on every push](docs/overview.svg)
+![A flake in your repository describes a box; on every push the box fetches it, builds it and activates it](docs/overview.svg)
 
 - `kit/`: the Home Manager modules, `denbox-api`, the `denbox` runtime.
 - `image/`: the container image, with Nix and a seed of the runtime.

@@ -1,137 +1,64 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -8 744 684" width="744" height="684" role="img" aria-label="How denbox works: what a box is made of and what happens on every push">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 530" width="1000" height="530" role="img" aria-label="denbox: a flake in your repository describes a box; on every push the box fetches it, builds it and activates it">
   <style>
-    text { fill: #fff; font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 11.5px; }
-    .h { font-weight: 600; font-size: 12px; letter-spacing: .04em; }
-    .m { fill: #9da5ae; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
-    .box { fill: none; stroke: #3d444d; stroke-width: 1; }
-    .outer { fill: none; stroke: #fff; stroke-width: 1; }
-    .ln { fill: none; stroke-width: 1.5; }
-    .c1 { fill: #58a6ff; } .s1 { stroke: #58a6ff; }
-    .c2 { fill: #bc8cff; } .s2 { stroke: #bc8cff; }
-    .c3 { fill: #56d364; } .s3 { stroke: #56d364; }
-    .c4 { fill: #e3b341; } .s4 { stroke: #e3b341; }
-    .c5 { fill: #9da5ae; } .s5 { stroke: #9da5ae; }
-    .s0 { stroke: #fff; } .c0 { fill: #fff; }
+    text { fill: #fff; font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 14px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; }
+    .g { fill: #9da5ae; }
+    .v { fill: #56d364; }
+    .cap { fill: #9da5ae; font-size: 11.5px; font-weight: 600; letter-spacing: .12em; }
+    .name { font-size: 26px; font-weight: 700; letter-spacing: -.01em; }
+    .tag { fill: #9da5ae; font-size: 15px; }
+    .step { font-size: 14px; text-anchor: middle; }
+    .wire { fill: none; stroke: #3d444d; stroke-width: 1.5; }
+    .edge { fill: none; stroke: #fff; stroke-width: 1.5; }
   </style>
-  <rect x="-16" y="-8" width="744" height="684" fill="#000"/>
   <defs>
-    <marker id="a0" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" class="c0"/></marker>
-    <marker id="a1" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" class="c1"/></marker>
-    <marker id="a2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" class="c2"/></marker>
-    <marker id="a3" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" class="c3"/></marker>
-    <marker id="a4" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" class="c4"/></marker>
-    <marker id="a5" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" class="c5"/></marker>
+    <marker id="tip" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" fill="#3d444d"/></marker>
   </defs>
-
-  <!-- Sources -->
-  <g>
-    <rect x="0" y="22" width="4" height="84" class="c1"/>
-    <text x="14" y="36" class="h">IMAGE</text>
-    <text x="14" y="53" class="mono m">ghcr.io/riprsa/denbox</text>
-    <text x="14" y="70">Debian, Nix, git, tini</text>
-    <text x="14" y="86">the denbox command</text>
-    <text x="14" y="102">spare copy of the runtime</text>
-
-    <rect x="0" y="126" width="4" height="84" class="c2"/>
-    <text x="14" y="140" class="h">KIT</text>
-    <text x="14" y="157" class="mono m">github:riprsa/denbox</text>
-    <text x="14" y="174">denbox.* modules</text>
-    <text x="14" y="190">optional: T3 and agents</text>
-    <text x="14" y="206">denbox-api, the runtime</text>
-
-    <rect x="0" y="230" width="4" height="52" class="c5"/>
-    <text x="14" y="244" class="h">PUBLIC CACHES</text>
-    <text x="14" y="261" class="mono m">cache.nixos.org</text>
-    <text x="14" y="278">prebuilt nixpkgs packages</text>
-
-    <rect x="0" y="302" width="4" height="84" class="c3"/>
-    <text x="14" y="316" class="h">ENVIRONMENT</text>
-    <text x="14" y="333" class="m">your git repository</text>
-    <text x="14" y="350">flake.nix: boxes, options</text>
-    <text x="14" y="366">your packages and services</text>
-    <text x="14" y="382">agent files, kit version</text>
-
-    <rect x="0" y="406" width="4" height="68" class="c4"/>
-    <text x="14" y="420" class="h">HOST</text>
-    <text x="14" y="437" class="m">install.sh and Compose</text>
-    <text x="14" y="454">bootstrap, git token</text>
-    <text x="14" y="470">ports, limits, volumes</text>
-  </g>
-
-  <!-- Arrows -->
-  <path d="M190 64 H262" class="ln s1" marker-end="url(#a1)"/>
-  <path d="M190 168 H226 V150 H262" class="ln s2" marker-end="url(#a2)"/>
-  <path d="M190 256 H226 V200 H262" class="ln s5" marker-end="url(#a5)"/>
-  <path d="M190 344 H238 V292 H262" class="ln s3" marker-end="url(#a3)"/>
-  <path d="M190 440 H238 V400 H262" class="ln s4" marker-end="url(#a4)"/>
-  <text x="194" y="184" class="m" style="font-size:10px">nix build</text>
-  <text x="196" y="336" class="m" style="font-size:10px">sync</text>
-
-  <!-- Container -->
-  <rect x="266" y="8" width="445" height="532" class="outer"/>
-  <text x="278" y="26" class="h">CONTAINER</text>
-
-  <rect x="278" y="36" width="421" height="56" class="box"/>
-  <text x="288" y="53" class="mono m">image layer, the same in every box</text>
-  <rect x="288" y="66" width="9" height="9" class="c1"/>
-  <text x="303" y="75" class="mono">/usr/local/bin/denbox · nix · git · tini</text>
-
-  <rect x="278" y="104" width="421" height="116" class="box"/>
-  <text x="288" y="121" class="mono m">/nix volume: everything Nix built or fetched</text>
-  <rect x="288" y="134" width="9" height="9" class="c1"/>
-  <text x="303" y="143">spare copy of the runtime, used until the first build</text>
-  <rect x="288" y="154" width="9" height="9" class="c2"/>
-  <text x="303" y="163">what the box switched on from the kit, at pinned versions</text>
-  <rect x="288" y="174" width="9" height="9" class="c3"/>
-  <text x="303" y="183">packages the environment added</text>
-  <rect x="288" y="194" width="9" height="9" class="c5"/>
-  <text x="303" y="203">fish, git, neovim and the rest from nixpkgs</text>
-
-  <rect x="278" y="232" width="421" height="116" class="box"/>
-  <text x="288" y="249" class="mono m">/root volume: the home directory</text>
-  <rect x="288" y="262" width="9" height="9" class="c2"/>
-  <rect x="299" y="262" width="9" height="9" class="c3"/>
-  <text x="314" y="271" class="mono">~/.nix-profile  ~/.config/denbox/services</text>
-  <text x="314" y="287" class="m">links into /nix, placed by Nix on activation</text>
-  <rect x="288" y="298" width="9" height="9" fill="none" stroke="#fff"/>
-  <text x="303" y="307" class="mono">~/Projects  ~/.t3  ~/.claude  ~/.local/state/denbox</text>
-  <text x="303" y="323" class="m">projects, threads, logins, sync state and logs</text>
-  <text x="303" y="339" class="m">only in this volume, not restorable from git</text>
-
-  <rect x="278" y="360" width="421" height="56" class="box"/>
-  <text x="288" y="377" class="mono m">/run/secrets: two files from the host</text>
-  <rect x="288" y="390" width="9" height="9" class="c4"/>
-  <text x="303" y="399" class="mono">denbox_bootstrap · denbox_git_token</text>
-
-  <rect x="278" y="428" width="421" height="100" class="box"/>
-  <text x="288" y="445" class="mono m">processes</text>
-  <text x="288" y="465" class="mono">tini → denbox supervise → s6</text>
-  <rect x="288" y="478" width="9" height="9" class="c2"/>
-  <text x="303" y="487" class="mono">denbox-sync · denbox-api · t3 when switched on</text>
-  <rect x="288" y="498" width="9" height="9" class="c3"/>
-  <text x="303" y="507">services the environment declared</text>
-
-  <!-- What happens on every push -->
-  <text x="0" y="578" class="h">ON EVERY PUSH TO THE ENVIRONMENT</text>
-  <text x="0" y="602" class="m mono">1</text>
-  <text x="14" y="602">you push a commit</text>
-  <text x="14" y="618">to your repository</text>
-  <path d="M126 606 H140" class="ln s0" marker-end="url(#a0)"/>
-  <text x="146" y="602" class="m mono">2</text>
-  <text x="160" y="602">the box fetches it</text>
-  <text x="160" y="618">within 5 minutes</text>
-  <path d="M272 606 H286" class="ln s0" marker-end="url(#a0)"/>
-  <text x="292" y="602" class="m mono">3</text>
-  <text x="306" y="602">Nix builds</text>
-  <text x="306" y="618">the new box</text>
-  <path d="M418 606 H432" class="ln s0" marker-end="url(#a0)"/>
-  <text x="438" y="602" class="m mono">4</text>
-  <text x="452" y="602">activation</text>
-  <text x="452" y="618">switches to it</text>
-  <path d="M564 606 H578" class="ln s0" marker-end="url(#a0)"/>
-  <text x="584" y="602" class="m mono">5</text>
-  <text x="598" y="602">s6 restarts only</text>
-  <text x="598" y="618">what changed</text>
-  <text x="0" y="648" class="m">A failed fetch, build or activation leaves the box as it was.</text>
+  <rect width="1000" height="530" fill="#000"/>
+  <text x="40" y="62" class="name">denbox</text>
+  <text x="40" y="88" class="tag">Declarative config for a container that rebuilds itself on every push.</text>
+  <text x="40" y="130" class="cap">YOUR REPOSITORY</text>
+  <text x="40" y="160" class="mono g">boxes.dev = {</text>
+  <text x="58" y="196" class="mono">denbox.t3.enable <tspan class="g">=</tspan> <tspan class="v">true</tspan><tspan class="g">;</tspan></text>
+  <text x="58" y="240" class="mono">denbox.agents.claude.enable <tspan class="g">=</tspan> <tspan class="v">true</tspan><tspan class="g">;</tspan></text>
+  <text x="58" y="284" class="mono">denbox.services.my-app <tspan class="g">=</tspan> <tspan class="v">./run.sh</tspan><tspan class="g">;</tspan></text>
+  <text x="58" y="328" class="mono">home.packages <tspan class="g">=</tspan> <tspan class="v">[ pkgs.php ]</tspan><tspan class="g">;</tspan></text>
+  <text x="40" y="364" class="mono g">};</text>
+  <rect x="660" y="146" width="300" height="232" class="edge"/>
+  <text x="660" y="130" class="cap">THE BOX, A CONTAINER</text>
+  <circle cx="690" cy="191" r="4.5" fill="#56d364"/>
+  <text x="706" y="196" class="mono">t3</text>
+  <text x="706" y="213" class="g" style="font-size:12px">T3 Code, supervised</text>
+  <circle cx="690" cy="235" r="4.5" fill="#56d364"/>
+  <text x="706" y="240" class="mono">claude</text>
+  <text x="706" y="257" class="g" style="font-size:12px">Claude Code on PATH</text>
+  <circle cx="690" cy="279" r="4.5" fill="#56d364"/>
+  <text x="706" y="284" class="mono">my-app</text>
+  <text x="706" y="301" class="g" style="font-size:12px">your service, supervised</text>
+  <circle cx="690" cy="323" r="4.5" fill="#56d364"/>
+  <text x="706" y="328" class="mono">php</text>
+  <text x="706" y="345" class="g" style="font-size:12px">any package from nixpkgs</text>
+  <path d="M289 191 H348 C404 191, 388 257.0, 444 257.0" class="wire"/>
+  <path d="M556 257.0 C600 257.0, 592 191, 652 191" class="wire" marker-end="url(#tip)"/>
+  <path d="M388 235 H388 C404 235, 388 257.0, 444 257.0" class="wire"/>
+  <path d="M556 257.0 C600 257.0, 592 235, 652 235" class="wire" marker-end="url(#tip)"/>
+  <path d="M379 279 H379 C404 279, 388 257.0, 444 257.0" class="wire"/>
+  <path d="M556 257.0 C600 257.0, 592 279, 652 279" class="wire" marker-end="url(#tip)"/>
+  <path d="M334 323 H348 C404 323, 388 257.0, 444 257.0" class="wire"/>
+  <path d="M556 257.0 C600 257.0, 592 323, 652 323" class="wire" marker-end="url(#tip)"/>
+  <circle cx="500" cy="257.0" r="56" fill="#000" stroke="#fff" stroke-width="1.5"/>
+  <text x="500" y="242.0" class="step">fetch</text>
+  <text x="500" y="262.0" class="step">build</text>
+  <text x="500" y="282.0" class="step">activate</text>
+  <text x="500" y="167.0" class="cap" text-anchor="middle">ON EVERY PUSH</text>
+  <text x="500" y="185.0" class="g" text-anchor="middle" style="font-size:12px">the box checks every 5 minutes</text>
+  <path d="M500 313.0 V402 M300 424 V402 H700 V424 M500 402 V424" class="wire"/>
+  <text x="300" y="390" class="cap">BUILT FROM</text>
+  <text x="300" y="446" class="mono" text-anchor="middle">image</text>
+  <text x="300" y="465" class="g" text-anchor="middle" style="font-size:12px">Debian, Nix, git</text>
+  <text x="500" y="446" class="mono" text-anchor="middle">kit</text>
+  <text x="500" y="465" class="g" text-anchor="middle" style="font-size:12px">modules, runtime, pinned agents</text>
+  <text x="700" y="446" class="mono" text-anchor="middle">nixpkgs cache</text>
+  <text x="700" y="465" class="g" text-anchor="middle" style="font-size:12px">prebuilt packages</text>
+  <text x="40" y="502" class="g" style="font-size:12.5px">A failed build or activation leaves the box as it was.</text>
 </svg>
