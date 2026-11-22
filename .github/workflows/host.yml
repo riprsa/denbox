@@ -1,0 +1,32 @@
+# Tests install-host.sh: with fakes of the machine, then for real on the
+# runner, an Ubuntu machine with systemd that is thrown away after the job.
+name: host
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
+      - run: shellcheck -x install-host.sh kit/runtime/tests/host.sh
+      - run: python3 -m unittest discover -s kit/runtime/tests -p 'test_install_host.py'
+
+  machine:
+    needs: installer
+    runs-on: ubuntu-latest
+    # Minutes when it passes: Nix, nixpkgs and a small Home Manager box.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: kit/runtime/tests/host.sh
+        env:
+          DENBOX_TEST_MACHINE: throwaway
