@@ -3,7 +3,7 @@
 A box is a Linux workspace built from a flake: shell and tools, optionally T3
 Code and coding agents, as Home Manager modules. The box follows a Git
 repository you own, the environment, and applies every new commit on its own.
-Today a box runs as a Docker container.
+A box runs as a Docker container or straight on a Linux machine with systemd.
 
 ![A flake in your repository describes a box; on every push the box fetches it, builds it and activates it](docs/overview.svg)
 
@@ -37,6 +37,23 @@ Today a box runs as a Docker container.
    Git branch. See [extension/README.md](extension/README.md).
 
 T3 Code listens on `127.0.0.1:3773` of the host.
+
+## On a machine, without a container
+
+On a Debian or Ubuntu machine with systemd, as root, run
+
+```sh
+bash install-host.sh
+```
+
+It asks the same questions as `install.sh`, installs Nix with its daemon when
+it is missing, and runs the box as the user the box names in
+`home.username` and `home.homeDirectory`, creating that user when needed. The
+box becomes the unit `denbox-<box>.service`: `journalctl -u denbox-<box> -f`
+for its logs, `su - <user> -c 'denbox shell'` for its shell. Run it again
+with `--name <box>` to update. The box manages that user's home and services;
+it does not manage the machine (kernel, firewall, system packages) and is not
+isolated from it.
 
 ## More
 
