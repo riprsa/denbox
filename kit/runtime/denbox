@@ -101,28 +101,41 @@ log_writer() {
 # service are renewed, so they point at the runtime that runs now and not at
 # one the store may collect.
 reconcile() {
-  local source=$config/services service name target fingerprint previous running
+  local source=$config/services service name target fingerprint previous running gone
   mkdir -p "$services"
   exec 7>"$run/services.lock"
   flock -x 7
   shopt -s nullglob
+  # Removed services whose supervisors took too long at an earlier reconcile.
+  for service in "$services"/.removed-*; do
+    s6-svok "$service" 2>/dev/null || s6-svok "$service/log" 2>/dev/null || rm -rf -- "$service"
+  done
   for service in "$services"/*; do
     name=${service##*/}
     [[ -f $service/.managed && ! -x $source/$name/run ]] || continue
     touch "$service/down"
-    if s6-svok "$service" 2>/dev/null; then
-      s6-svc -wD -T 35000 -dx "$service" || true
-      for ((attempt = 0; attempt < 50; attempt++)); do
-        s6-svok "$service" 2>/dev/null || break
-        sleep .1
-      done
-      if s6-svok "$service" 2>/dev/null; then
+    if s6-svok "$service" 2>/dev/null || s6-svok "$service/log" 2>/dev/null; then
+      # s6-svscan forgets a service only when its supervisor exits after a
+      # scan found the directory gone. Before s6 2.15 it never forgets one
+      # whose supervisor exited first, and refuses every later directory with
+      # the same inode, so a new service would not start. The directory
+      # leaves the scan first, then s6-svscan stops both supervisors.
+      gone=$services/.removed-$name
+      if [[ -e $gone ]] || ! mv -- "$service" "$gone"; then
         echo "Service $name has not stopped; removal is retried at the next sync" >&2
         continue
       fi
+      s6-svscanctl -an "$services" 2>/dev/null || { s6-svc -dx "$gone" 2>/dev/null; s6-svc -dx "$gone/log" 2>/dev/null; } || true
+      for ((attempt = 0; attempt < 400; attempt++)); do
+        s6-svok "$gone" 2>/dev/null || s6-svok "$gone/log" 2>/dev/null || break
+        sleep .1
+      done
+      if s6-svok "$gone" 2>/dev/null || s6-svok "$gone/log" 2>/dev/null; then
+        echo "Service $name has not stopped; removal is retried at the next sync" >&2
+        continue
+      fi
+      service=$gone
     fi
-    # s6-log exits on TERM; its supervisor must not outlive the directory.
-    if s6-svok "$service/log" 2>/dev/null; then s6-svc -wD -T 5000 -dx "$service/log" || true; fi
     rm -rf -- "$service"
   done
   for service in "$source"/*; do
@@ -444,8 +457,10 @@ case ${0##*/} in
     exec 2>&1
     PATH=$user_path
     exec ./command ;;
-  # Exit code 256 is a stop by signal; a crash waits a little before s6 restarts it.
-  finish) [[ ${1:-} == 256 ]] || sleep 5; exit 0 ;;
+  # Exit code 256 is a stop by signal, and a service not wanted up was stopped
+  # (the sync loop exits 0 on TERM); a crash waits a little before s6 restarts
+  # it, less than the 5 seconds s6 allows a finish script before killing it.
+  finish) [[ ${1:-} == 256 || $(s6-svstat -o wantedup . 2>/dev/null) == false ]] || sleep 4; exit 0 ;;
   # The sync loop: the box's own runtime once activation installed it.
   command)
     if [[ -x $profile_runtime && $(readlink -f "$profile_runtime") != "$self" ]]; then
