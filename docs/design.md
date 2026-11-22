@@ -93,6 +93,7 @@ An agent that needs a proxy, a wrapper or another build overrides its
 | Path | Holds |
 | --- | --- |
 | `~/.config/denbox/services/NAME/run` | a supervised service, optionally with `finish` |
+| `~/.config/denbox/shell` | the executable `denbox shell` runs, written by the tools module; bash without it |
 | `~/.local/state/denbox/` | runtime state: fetched sources, the applied revision, `status` |
 | `~/.local/state/denbox/optional-services/NAME` | marker of a switched-on optional service |
 | `~/.local/state/denbox/logs/NAME/current` | a service's log, 10 x 1 MB |
@@ -153,8 +154,11 @@ build against the kit's current `main` at every sync, whatever the
 environment's `flake.lock` says. Without it the lock decides, and a kit update
 arrives when the environment updates its lock. The default is empty.
 
-The runtime is part of the box it builds. When a sync changes the runtime's
-own store path, the sync loop exits and s6 starts the new one.
+The runtime is part of the box it builds: activation installs it as
+`~/.nix-profile/bin/denbox`. The image starts that one when it exists and its
+own seed copy otherwise, so a box needs the image's copy only for its first
+build. When a sync changes the runtime's store path, the sync loop exits and
+s6 starts the new one.
 
 ## Secrets
 
