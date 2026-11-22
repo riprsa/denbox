@@ -158,6 +158,7 @@ compose='
   "services:",
   "  box:",
   "    image: \($image | q)",
+  "    container_name: \("denbox-" + $name | q)",
   "    # T3 Code labels the environment with the hostname.",
   "    hostname: \($name | q)",
   "    restart: unless-stopped",

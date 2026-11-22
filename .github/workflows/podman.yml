@@ -1,6 +1,7 @@
 # The box under rootless Podman: the runtime's end-to-end test with Podman
 # as the container command, then the fixture box started from the Quadlet
-# units deploy/render writes, as a user service. The image is built with
+# units deploy/render writes, as a user service, then the real installer
+# with --runtime podman. The image is built with
 # Docker, as image.yml builds it, and loaded into Podman.
 name: podman
 
@@ -47,3 +48,6 @@ jobs:
             grep -q '^ExecStart=.*podman run .*--name=denbox-personal' generated
           done
       - run: deploy/tests/quadlet.sh docker.io/library/denbox-test-image:latest
+      - run: deploy/tests/installer.sh docker.io/library/denbox-test-image:latest
+        env:
+          DENBOX_TEST_CLI: podman
