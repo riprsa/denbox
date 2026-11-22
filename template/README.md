@@ -13,6 +13,6 @@ there is commented; the full list is in denbox's `docs/design.md`.
 
 1. Check that the box builds: `nix build .#boxes.main`.
 2. Push this flake to a Git repository.
-3. Start a box from it with denbox's standard Docker deployment, giving it
-   the repository, the ref and the box name `main`. The box syncs to every
-   new commit on its own.
+3. Start a box from it on a Docker host with denbox's `install.sh`, giving
+   it the repository, the branch and the box name `main`. The box syncs to
+   every new commit on its own.
