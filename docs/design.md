@@ -213,6 +213,37 @@ own seed copy otherwise, so a box needs the image's copy only for its first
 build. When a sync changes the runtime's store path, the sync loop exits and
 s6 starts the new one.
 
+## Binary cache
+
+Most of a box comes prebuilt from `cache.nixos.org`. The kit's own packages
+come from the public cache `https://denbox.cachix.org`, key
+`denbox.cachix.org-1:0wTpaHGYAg3yirdzhxYjNPnzPjVjBiNoMHaK4Hptx9I=`, so a box
+does not fetch a Go toolchain to compile `denbox-api`.
+
+- **What is in it**: `denbox-api` and the runtime for `x86_64-linux`, with
+  their runtime closures, pushed by CI after the checks pass on `main`. A box
+  hits it when it builds against the kit's nixpkgs; a box whose environment
+  makes nixpkgs follow its own builds them itself.
+- **What never is**: T3 Code, Codex and Claude Code, or any other vendor
+  binary. Every box fetches those from their vendors.
+- **How a box uses it**: the runtime adds the cache with
+  `--extra-substituters` and `--extra-trusted-public-keys` to the evaluation
+  and the build of a sync, the first build on the image's seed included,
+  after whatever the host configures. An unreachable cache is a warning and
+  the box builds without it; a network that drops the connection silently costs
+  `connect-timeout` times `download-attempts` once per build (80 seconds with
+  Nix's defaults), inside `apply_timeout`.
+- **A Nix daemon** ignores substituters and keys from a user it does not
+  trust. root and single-user Nix are trusted; for an ordinary user the
+  daemon's `nix.conf` needs
+
+      extra-trusted-substituters = https://denbox.cachix.org
+      extra-trusted-public-keys = denbox.cachix.org-1:0wTpaHGYAg3yirdzhxYjNPnzPjVjBiNoMHaK4Hptx9I=
+
+  The first line lets the runtime add the cache; it does not make other Nix
+  users use it.
+- **Off**: `DENBOX_BINARY_CACHE=0` in the runtime's environment leaves it out.
+
 ## Secrets
 
 The kit never reads a vault. `denbox.secrets.provider` is an executable called
