@@ -1,0 +1,7 @@
+#!/bin/sh
+# The image's entrypoint: tini as PID 1 over `denbox supervise`. /run/denbox
+# starts empty, as a tmpfs would, so no s6 state survives a restart.
+set -eu
+mkdir -p /run/denbox
+find /run/denbox -mindepth 1 -delete
+exec /usr/bin/tini -- /usr/local/bin/denbox supervise

@@ -1,0 +1,7 @@
+# The image needs the flake, the kit and its own files; nothing else.
+*
+!flake.nix
+!flake.lock
+!kit
+!image
+kit/runtime/tests

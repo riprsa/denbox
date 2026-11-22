@@ -1,0 +1,6 @@
+#!/bin/sh
+# denbox on PATH: the box's own runtime once its activation installed it,
+# the image's seed before.
+profile=${HOME:-/root}/.nix-profile/bin/denbox
+if [ -x "$profile" ]; then exec "$profile" "$@"; fi
+exec /nix/var/nix/gcroots/denbox-seed/bin/denbox "$@"
