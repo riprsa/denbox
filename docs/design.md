@@ -171,7 +171,7 @@ a public one. 1Password is not part of the bootstrap.
    configuration, and unpack that revision into a snapshot without `.git`.
 2. Read `boxes.<box>.follow` from the snapshot.
 3. Build `path:<snapshot>#boxes.<box>`, with `--override-input NAME REF` for
-   every entry of `follow`.
+   every entry of `follow`, `REF` pinned to the revision it resolved to.
 4. Run `<box>/activate`, then reconcile the supervised services with
    `~/.config/denbox/services`.
 
@@ -181,8 +181,10 @@ from its last applied state without network.
 Steps 3 and 4 are skipped while nothing changed: the revision of the
 environment is the one applied and every followed reference still resolves to
 the revision it had then. Resolving a reference asks its host for the current
-revision and evaluates nothing, so an idle box costs a fetch per sync. It still
-reconciles. After an activation, at most once a day, the runtime keeps three
+revision and evaluates nothing, and `follow` is read again only for a new
+revision, so an idle box costs a fetch per sync. A skipped sync still
+reconciles. A reference that cannot be resolved fails the sync and keeps the
+box as it was. After an activation, at most once a day, the runtime keeps three
 generations of the user's profiles and collects the store.
 
 `denbox.follow` is how a kit update reaches boxes without a commit to every

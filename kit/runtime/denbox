@@ -5,6 +5,7 @@
 #   denbox sync [--once]                   fetch, build, activate, reconcile services
 #   denbox service status [NAME]
 #   denbox service start|stop|restart NAME
+#   denbox service reconcile               make the supervised services match ~/.config/denbox/services now
 #   denbox service logs NAME [-f] [-n N]
 #   denbox shell [ARGS]                    the configured shell, bash without it
 #
@@ -36,7 +37,7 @@ sync_service=denbox-sync
 name_pattern='^[a-z][a-z0-9-]*$'
 
 usage() {
-  sed -n '3,8s/^# //p' "$self" >&2
+  sed -n '3,9s/^# //p' "$self" >&2
   exit 64
 }
 
@@ -76,7 +77,9 @@ log_writer() {
   exec s6-log -b -- 1 n10 s1000000 T "$directory"
 }
 
-# reconcile: makes the supervised services match $config/services. A service
+# reconcile: makes the supervised services match $config/services. Every sync
+# calls it, and so does `denbox service reconcile`, for a tool that changes
+# the services between syncs. It prints nothing when nothing changed. A service
 # restarts only when its executable changed. The wrapper links of every
 # service are renewed, so they point at the runtime that runs now and not at
 # one the store may collect.
@@ -137,8 +140,9 @@ reconcile() {
   exec 7>&-
 }
 
-# service ACTION [NAME] [OPTIONS]: the supervisor's interface, used by people
-# and by denbox-api. status prints "NAME: <s6-svstat line>" per service.
+# service ACTION [NAME] [OPTIONS]: the supervisor's interface, used by people,
+# by denbox-api and by tools that write services. status prints
+# "NAME: <s6-svstat line>" per service.
 service() {
   local action=${1:-status} name=${2:-}
   if [[ -n $name ]]; then
@@ -163,6 +167,9 @@ service() {
         # inside it and dies with it. -r before -u: a down service starts once.
         restart) s6-svc -wr -T 40000 -ru "$services/$name" ;;
       esac ;;
+    reconcile)
+      [[ -z $name ]] || usage
+      reconcile ;;
     logs)
       [[ -n $name ]] || usage
       shift 2
@@ -215,11 +222,24 @@ git_fetch() {
     git -c credential.helper= -c http.followRedirects=false "$@"
 }
 
+# resolve REF: prints the locked attributes of the revision REF names now.
+# Nix asks the host and evaluates nothing. When the host fails, Nix may fall
+# back to the revision it saw last with a warning; that is a failure here.
+resolve() {
+  local output result=0
+  output=$(nix flake prefetch --refresh --json "$1" 2>"$state/resolve.log") || result=$?
+  cat "$state/resolve.log" >&2
+  if ((result == 0)) && grep -q 'using cached version' "$state/resolve.log"; then result=69; fi
+  ((result == 0)) || { echo "Could not resolve $1" >&2; return "$result"; }
+  jq -c .locked <<<"$output"
+}
+
 # sync_once: one pass of the four steps of the design's Sync section. Any
 # failure exits before the applied state changes.
 sync_once() {
-  local cache repository ref box deadline revision snapshot follow entry fingerprint candidate applied started remaining
-  local overrides=() refresh=()
+  local cache repository ref box deadline revision snapshot follow entry locked resolved pinned
+  local fingerprint applied_revision applied_box candidate applied started remaining
+  local overrides=()
   cache=$(read_bootstrap)
   repository=$(jq -r .repository "$cache")
   ref=$(jq -r .ref "$cache")
@@ -242,29 +262,44 @@ sync_once() {
     mv "$incoming" "$snapshot"
   fi
 
-  # 2. Read follow.
-  follow=$(nix eval --no-write-lock-file --json "path:$snapshot#boxes.$box.follow")
-  jq -e 'type == "object" and all(to_entries[];
-           (.key | test("^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$")) and (.value | type == "string" and length > 0))' \
-    <<<"$follow" > /dev/null || { echo "boxes.$box.follow is not an attribute set of flake references" >&2; return 65; }
-  while IFS= read -r -d '' entry; do overrides+=(--override-input "${entry%%=*}" "${entry#*=}"); done \
-    < <(jq -j 'to_entries[] | "\(.key)=\(.value)\u0000"' <<<"$follow")
-  follow=$(jq -cS . <<<"$follow")
+  # 2. Read follow. It changes only with the revision, so the value recorded
+  # with the applied revision is used again and an idle box evaluates nothing.
+  read -r applied_revision applied_box _ 2>/dev/null < "$state/fingerprint" || true
+  if [[ $revision == "${applied_revision:-}" && $box == "${applied_box:-}" && -f $state/follow ]]; then
+    follow=$(< "$state/follow")
+  else
+    follow=$(nix eval --no-write-lock-file --json "path:$snapshot#boxes.$box.follow")
+    jq -e 'type == "object" and all(to_entries[];
+             (.key | test("^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$")) and (.value | type == "string" and length > 0))' \
+      <<<"$follow" > /dev/null || { echo "boxes.$box.follow is not an attribute set of flake references" >&2; return 65; }
+    follow=$(jq -cS . <<<"$follow")
+  fi
 
-  # A box that follows nothing changes only with the revision: skip the build.
-  fingerprint="$revision $box $follow"
-  if [[ $follow == '{}' && -e $state/applied && $fingerprint == "$(cat "$state/fingerprint" 2>/dev/null)" ]]; then
+  # Every followed reference resolved to its revision now. The fingerprint
+  # names the revisions, so an unchanged one skips the build.
+  resolved='{}'
+  while IFS= read -r -d '' entry; do
+    locked=$(resolve "${entry#*=}")
+    resolved=$(jq -cS --arg name "${entry%%=*}" --argjson locked "$locked" '.[$name] = $locked' <<<"$resolved")
+  done < <(jq -j 'to_entries[] | "\(.key)=\(.value)\u0000"' <<<"$follow")
+  fingerprint="$revision $box $resolved"
+  if [[ -e $state/applied && $fingerprint == "$(cat "$state/fingerprint" 2>/dev/null)" ]]; then
     reconcile
     return 0
   fi
-  # Followed references are branches: look at them again on every sync.
-  [[ $follow == '{}' ]] || refresh=(--refresh)
 
-  # 3. Build.
+  # 3. Build against the resolved revisions, so the box is what the
+  # fingerprint names. They are pinned, so the build needs no --refresh.
+  if [[ $resolved != '{}' ]]; then
+    pinned=$(DENBOX_LOCKED=$resolved nix eval --impure --json --expr \
+      'builtins.mapAttrs (_: builtins.flakeRefToString) (builtins.fromJSON (builtins.getEnv "DENBOX_LOCKED"))')
+    while IFS= read -r -d '' entry; do overrides+=(--override-input "${entry%%=*}" "${entry#*=}"); done \
+      < <(jq -j 'to_entries[] | "\(.key)=\(.value)\u0000"' <<<"$pinned")
+  fi
   echo "Building boxes.$box at $revision"
   started=$SECONDS
   timeout --foreground --kill-after=10s "$deadline" \
-    nix build --no-write-lock-file --out-link "$state/candidate" "${refresh[@]}" "${overrides[@]}" "path:$snapshot#boxes.$box"
+    nix build --no-write-lock-file --out-link "$state/candidate" "${overrides[@]}" "path:$snapshot#boxes.$box"
   candidate=$(readlink -f "$state/candidate")
   applied=$(readlink -f "$state/applied" 2>/dev/null || true)
 
@@ -278,6 +313,7 @@ sync_once() {
     nix build --out-link "$state/applied" "$candidate"
   fi
   rm -f "$state/candidate"
+  printf '%s\n' "$follow" > "$state/follow"
   printf '%s\n' "$fingerprint" > "$state/fingerprint"
   printf '%s\n' "$revision" > "$state/revision"
   reconcile
