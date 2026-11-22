@@ -57,6 +57,8 @@ RUN NIX_CONFIG="filter-syscalls = $NIX_INSTALL_FILTER_SYSCALLS" \
 COPY --chmod=0755 image/init /usr/local/bin/denbox-init
 COPY --chmod=0755 image/denbox image/denbox-login /usr/local/bin/
 COPY --chmod=0644 image/profile.sh /etc/profile.d/denbox.sh
+# The standard deployment, which install.sh reads out of the image.
+COPY --chmod=0644 deploy/compose.yaml /usr/local/share/denbox/compose.yaml
 
 WORKDIR /root
 ENTRYPOINT ["/usr/local/bin/denbox-init"]
