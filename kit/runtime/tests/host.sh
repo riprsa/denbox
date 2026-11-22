@@ -66,7 +66,10 @@ getent passwd "$user" > /dev/null || fail "no user $user"
 
 echo '# the unit is active and the first sync applies the box'
 systemctl is-active --quiet "$unit" || fail 'unit not active'
-wait_for 1800 'grep -q " applied " ~/.local/state/denbox/status'
+# A first sync that fails ends the test at once; the fixture has no reason to.
+wait_for 1800 '! grep -q "failed exit=" ~/.local/state/denbox/status 2> /dev/null || exit 0
+  grep -q " applied " ~/.local/state/denbox/status'
+as 'grep -q " applied " ~/.local/state/denbox/status' || fail 'the first sync failed'
 [[ $(as 'cat ~/worker-version') == 1 ]] || fail "version $(as 'cat ~/worker-version')"
 
 echo '# its service and the sync loop run under s6, found by the runtime as the user'
