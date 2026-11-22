@@ -4,7 +4,8 @@
 
 The fake docker logs every call and plays the image: its git reads the
 repository anonymously when FAKE_PUBLIC is set, and otherwise only with the
-token TOKEN handed over on standard input.
+token TOKEN handed over on standard input. Neither TOKEN nor the Tailscale
+key KEY may reach a command line or the environment of docker.
 """
 import json
 import os
@@ -21,12 +22,14 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 TOKEN = 'fixture-secret-token'
+KEY = 'fixture-tailscale-key'
 
 DOCKER = r'''
 import json, os, pathlib, sys
 args = sys.argv[1:]
 state = pathlib.Path(os.environ['FAKE_STATE'])
-event = {'args': args, 'token_in_env': any(os.environ['FAKE_SECRET'] in v for k, v in os.environ.items() if k != 'FAKE_SECRET')}
+secrets = (os.environ['FAKE_SECRET'], os.environ['FAKE_KEY'])
+event = {'args': args, 'token_in_env': any(s in v for k, v in os.environ.items() if not k.startswith('FAKE_') for s in secrets)}
 status = 0
 if args[:2] == ['volume', 'inspect']:
     status = 0 if (state / ('volume-' + args[2])).exists() else 1
@@ -48,6 +51,8 @@ elif args[0] == 'compose' and 'up' in args:
     event['bootstrap'] = json.loads((directory / 'bootstrap.json').read_text())
     event['env'] = (directory / '.env').read_text().splitlines()
     event['token_file'] = (directory / 'git_token').read_text().strip() == os.environ['FAKE_SECRET']
+    key = directory / 'tailscale_authkey'
+    event['key'] = key.read_text().strip() if key.exists() else None
 with open(state / 'calls', 'a') as log:
     log.write(json.dumps(event) + '\n')
 sys.exit(status)
@@ -66,7 +71,7 @@ class Installer(unittest.TestCase):
         docker.chmod(0o755)
         self.dir = self.root / 'box'
         self.env = dict(os.environ, PATH=f'{self.root}/bin:{os.environ["PATH"]}', FAKE_STATE=str(self.root / 'state'),
-                        FAKE_SECRET=TOKEN, TMPDIR=str(self.root / 'temporary'))
+                        FAKE_SECRET=TOKEN, FAKE_KEY=KEY, TMPDIR=str(self.root / 'temporary'))
         for name in list(self.env):
             if name.startswith('DENBOX_'):
                 del self.env[name]
@@ -75,8 +80,9 @@ class Installer(unittest.TestCase):
         log = self.root / 'state/calls'
         events = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
         for event in events:
-            self.assertNotIn(TOKEN, json.dumps(event['args']), 'the token is in a command line')
-            self.assertFalse(event['token_in_env'], 'the token is in the environment of docker')
+            for secret in (TOKEN, KEY):
+                self.assertNotIn(secret, json.dumps(event['args']), 'a secret is in a command line')
+            self.assertFalse(event['token_in_env'], 'a secret is in the environment of docker')
         return events
 
     def up(self):
@@ -89,6 +95,16 @@ class Installer(unittest.TestCase):
                                 start_new_session=True, timeout=30)
         self.assertEqual(list((self.root / 'temporary').iterdir()), [], 'temporary files survived')
         return result.returncode, result.stdout + result.stderr
+
+    def assertTailscale(self, up, key):
+        """Asserts that compose up ran with the overlay and the key."""
+        directory = up['args'][up['args'].index('--project-directory') + 1]
+        self.assertIn(f'{directory}/compose.tailscale.yaml', up['args'])
+        self.assertEqual(up['files']['tailscale_authkey'], '0o600')
+        self.assertEqual(up['files']['compose.tailscale.yaml'], '0o644')
+        self.assertEqual(up['key'], key)
+        self.assertIn('DENBOX_TAILSCALE_AUTHKEY_FILE=./tailscale_authkey', up['env'])
+        self.assertIn('COMPOSE_FILE=compose.yaml:compose.tailscale.yaml', up['env'])
 
     def interactive(self, answers, **env):
         """Runs the installer on a terminal, answering each prompt that
@@ -183,6 +199,45 @@ class Installer(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn('no branch nope', output)
         self.assertFalse(self.dir.exists())
+
+    def test_tailscale_key_from_a_file_then_update_keeps_the_overlay_and_the_key(self):
+        key_file = self.root / 'key'
+        key_file.write_text(KEY + '\n')
+        code, output = self.unattended('--repository', 'https://git.example.com/me/environment.git', '--box', 'main',
+                                       '--dir', str(self.dir), '--tailscale-authkey-file', str(key_file),
+                                       FAKE_PUBLIC='1')
+        self.assertEqual(code, 0, output)
+        key_file.unlink()
+        code, output = self.unattended('--dir', str(self.dir), FAKE_PUBLIC='1')
+        self.assertEqual(code, 0, output)
+        for up in self.up():
+            self.assertTailscale(up, KEY)
+
+    def test_tailscale_asks_for_the_key_without_echo(self):
+        code, output = self.interactive({
+            'Environment repository URL': 'https://git.example.com/me/environment.git',
+            'Branch [main]': '', 'Box name': 'main', 'Tailscale auth key': KEY},
+            FAKE_PUBLIC='1', DENBOX_TAILSCALE='1')
+        self.assertEqual(code, 0, output)
+        self.assertNotIn(KEY, output)
+        [up] = self.up()
+        self.assertTailscale(up, KEY)
+
+    def test_tailscale_without_a_key_leaves_the_login_to_the_box(self):
+        code, output = self.unattended('--tailscale', '--repository', 'https://git.example.com/me/environment.git',
+                                       '--box', 'main', '--dir', str(self.dir), FAKE_PUBLIC='1')
+        self.assertEqual(code, 0, output)
+        self.assertIn('tailscale login', output)
+        [up] = self.up()
+        self.assertTailscale(up, '')
+
+    def test_without_tailscale_there_is_no_overlay(self):
+        code, output = self.unattended('--repository', 'https://git.example.com/me/environment.git', '--box', 'main',
+                                       '--dir', str(self.dir), FAKE_PUBLIC='1')
+        self.assertEqual(code, 0, output)
+        [up] = self.up()
+        self.assertNotIn('tailscale_authkey', up['files'])
+        self.assertFalse(any('tailscale' in arg for arg in up['args']))
 
 
 if __name__ == '__main__':

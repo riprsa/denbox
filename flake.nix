@@ -24,8 +24,9 @@
       # A box: the Home Manager activation package of a box's module on top
       # of the kit's modules, with the box's denbox.follow, its denbox.host
       # and its evaluated configuration attached (docs/design.md,
-      # Environment contract).
-      mkBox = system: module:
+      # Environment contract). name is the box's attribute name, its
+      # denbox.name.
+      mkBox = system: name: module:
         let
           home = home-manager.lib.homeManagerConfiguration {
             pkgs = pkgsFor system;
@@ -36,6 +37,7 @@
                 home.homeDirectory = lib.mkDefault "/root";
                 # Fixed for every box; changing it would change existing boxes.
                 home.stateVersion = lib.mkDefault "26.05";
+                denbox.name = name;
               }
               module
             ];
@@ -50,7 +52,7 @@
       # Box name to Home Manager module, to `{ <system>.boxes.<name> = <box>; }`,
       # the value of an environment's legacyPackages.
       lib.mkBoxes = boxes: lib.genAttrs systems (system: {
-        boxes = lib.mapAttrs (_: mkBox system) boxes;
+        boxes = lib.mapAttrs (mkBox system) boxes;
       });
 
       # `mkBundle pkgs { <name> = { background, content, pages }; }`: the
@@ -87,6 +89,10 @@
             kit = self;
           };
           host = pkgs.callPackage ./kit/nix/checks/host.nix {
+            inherit system;
+            kit = self;
+          };
+          tailscale = pkgs.callPackage ./kit/nix/checks/tailscale.nix {
             inherit system;
             kit = self;
           };
