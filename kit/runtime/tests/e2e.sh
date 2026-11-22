@@ -71,7 +71,14 @@ echo '# the box applies the environment and supervises its service, following ex
 wait_for 'denbox service status worker | grep "^worker: up "'
 [[ $(version) == '1 main-1' ]] || fail "version $(version)"
 box denbox service status | grep '^denbox-sync: up ' > /dev/null || fail 'sync loop not supervised'
-[[ $(box getent passwd root | cut -d: -f7) == /usr/local/bin/denbox-login ]] || fail 'login shell'
+[[ $(box getent passwd root | cut -d: -f7) == /usr/local/libexec/denbox/login ]] || fail 'login shell'
+[[ $(box sh -c 'ls /usr/local/bin') == $'denbox\nnix' ]] || fail "commands of the image on PATH: $(box sh -c 'ls /usr/local/bin' | tr '\n' ' ')"
+
+echo '# a second supervisor is refused and the first keeps its services'
+result=0
+box timeout 20 denbox supervise 2>/dev/null || result=$?
+[[ $result == 75 ]] || fail "a second supervise exited $result"
+box denbox service status worker | grep '^worker: up ' > /dev/null || fail 'worker not up after a second supervise'
 [[ $(box denbox shell -c 'echo ok') == ok ]] || fail 'denbox shell'
 
 echo '# a new commit is applied by sync --once'

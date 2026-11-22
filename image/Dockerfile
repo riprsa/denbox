@@ -36,13 +36,13 @@ RUN set -eu; \
     rm -rf /tmp/nix.tar.xz /tmp/nix-${NIX_VERSION}-${system}; \
     ln -s "$(readlink -f /opt/nix/.nix-profile)" /nix/var/nix/gcroots/denbox-nix; \
     ln -s /nix/var/nix/gcroots/denbox-nix/bin/nix /usr/local/bin/nix; \
-    usermod --shell /usr/local/bin/denbox-login root
+    usermod --shell /usr/local/libexec/denbox/login root
 
 ENV HOME=/root \
     USER=root \
     NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     PATH=/root/.nix-profile/bin:/nix/var/nix/gcroots/denbox-nix/bin:/usr/local/bin:/usr/bin:/bin \
-    SHELL=/usr/local/bin/denbox-login
+    SHELL=/usr/local/libexec/denbox/login
 
 # The seed: the runtime of this checkout, rooted so store maintenance keeps
 # it. A box needs it only until its first activation installs its own.
@@ -54,11 +54,15 @@ RUN NIX_CONFIG="filter-syscalls = $NIX_INSTALL_FILTER_SYSCALLS" \
     && nix store gc \
     && apt-get purge -y curl xz-utils
 
-COPY --chmod=0755 image/init /usr/local/bin/denbox-init
-COPY --chmod=0755 image/denbox image/denbox-login /usr/local/bin/
+# denbox is the only command of the image on PATH. Root's login shell is kept
+# off it: nothing in a box has a reason to call it by name.
+COPY --chmod=0755 image/denbox /usr/local/bin/denbox
+COPY --chmod=0755 image/login /usr/local/libexec/denbox/login
 COPY --chmod=0644 image/profile.sh /etc/profile.d/denbox.sh
 # The standard deployment, which install.sh reads out of the image.
 COPY --chmod=0644 deploy/compose.yaml /usr/local/share/denbox/compose.yaml
 
 WORKDIR /root
-ENTRYPOINT ["/usr/local/bin/denbox-init"]
+# tini as PID 1 over the supervisor. The runtime clears what an earlier
+# supervisor left in /run/denbox and refuses to start a second one.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/denbox", "supervise"]
