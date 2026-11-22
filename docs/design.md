@@ -254,7 +254,7 @@ options hold two separate things:
   bundle. A source is a file in a Git repository on a protected branch, for
   example a raw file URL of the environment's `main`. The loader fetches every
   source every 5 minutes and runs what they hold. It refuses a source on the
-  same origin as the box address.
+  same host as the box address, on any port, and a source that redirects there.
 
 A bundle is
 

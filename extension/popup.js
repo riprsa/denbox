@@ -1,30 +1,29 @@
-// The toolbar popup: one entry per page of the running bundle, named by the
-// page's <title> (else PART/PAGE), opening page.html#PART/PAGE in a tab.
+// The toolbar popup: the box panel first, then one entry per page of the
+// running parts, named by the page's <title> (else PART/PAGE), each opening in
+// a new tab.
 const titleOf = (html) => new DOMParser().parseFromString(html ?? "", "text/html").title.trim();
 
-function entry(label, onClick) {
+function entry(label, file) {
   const button = document.createElement("button");
   button.textContent = label;
-  button.addEventListener("click", onClick);
+  button.addEventListener("click", () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL(file) });
+    window.close();
+  });
   return button;
 }
 
 async function show() {
-  const stored = await chrome.storage.local.get(["denbox:bundle", "denbox:status"]);
-  const bundle = stored["denbox:bundle"] ? parseBundle(stored["denbox:bundle"]) : { parts: {} };
-  const entries = pagesOf(bundle).map(({ part, page }) =>
-    entry(titleOf(bundle.parts[part].pages[page].html) || `${part}/${page}`, () => {
-      chrome.tabs.create({ url: chrome.runtime.getURL(`page.html#${encodeURIComponent(part)}/${encodeURIComponent(page)}`) });
-      window.close();
-    }),
+  const stored = await chrome.storage.local.get(["denbox:address", "denbox:sources", "denbox:bundles", "denbox:status"]);
+  const entries = plan(stored["denbox:address"] ?? "", stored["denbox:sources"] ?? [], stored["denbox:bundles"] ?? {});
+  const pages = pagesOf(entries).map(({ part, page, html }) =>
+    entry(titleOf(html) || `${part}/${page}`, `page.html#${encodeURIComponent(part)}/${encodeURIComponent(page)}`),
   );
-  if (!entries.length) {
-    const empty = document.createElement("p");
-    empty.className = stored["denbox:status"]?.error ? "bad" : "muted";
-    empty.textContent = stored["denbox:status"]?.error ?? "No pages";
-    entries.push(empty);
-  }
-  document.getElementById("pages").replaceChildren(...entries);
+  const failed = Object.values(stored["denbox:status"] ?? {}).filter((status) => status.error).length;
+  const note = document.createElement("p");
+  note.className = "bad";
+  note.textContent = `${failed} source${failed === 1 ? "" : "s"} failed`;
+  document.getElementById("pages").replaceChildren(entry("Box", "panel.html"), ...pages, ...(failed ? [note] : []));
 }
 
 document.getElementById("settings").addEventListener("click", () => {

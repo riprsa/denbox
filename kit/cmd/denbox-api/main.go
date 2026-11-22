@@ -6,7 +6,6 @@
 //	DENBOX_OPTIONAL_SERVICES_DIR  their markers
 //	DENBOX_SERVICE_COMMAND        the supervisor command prefix (denbox service)
 //	DENBOX_INTERFACE              the interface whose traffic is shown (eth0)
-//	DENBOX_BUNDLE                 the browser bundle file; unset without parts
 package main
 
 import (
@@ -32,7 +31,6 @@ func main() {
 		Interface:           os.Getenv("DENBOX_INTERFACE"),
 		OptionalServices:    strings.Fields(os.Getenv("DENBOX_OPTIONAL_SERVICES")),
 		OptionalServicesDir: os.Getenv("DENBOX_OPTIONAL_SERVICES_DIR"),
-		Bundle:              os.Getenv("DENBOX_BUNDLE"),
 	})
 	address := env("DENBOX_API_ADDRESS", "127.0.0.1:48099")
 	log.Printf("denbox-api: listening on %s", address)

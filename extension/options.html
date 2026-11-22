@@ -5,22 +5,31 @@
 <title>Denbox settings</title>
 <link rel="stylesheet" href="stock.css">
 <style>
-  body { max-width: 520px; }
+  body { max-width: 640px; }
   h2 { margin: 16px 0 6px; }
   h2:first-child { margin-top: 0; }
+  p { margin: 0 0 6px; }
   .row { display: flex; gap: 8px; margin-top: 6px; align-items: baseline; }
+  .source input[type=url] { flex: 3; }
+  .source input[type=password] { flex: 1; }
   table { border-collapse: collapse; width: 100%; }
   td { padding: 2px 12px 2px 0; vertical-align: top; }
   td:last-child { padding-right: 0; width: 100%; }
+  td.url { word-break: break-all; }
+  td.part { padding-left: 12px; }
 </style>
 </head>
 <body>
-  <h2>Box API</h2>
+  <h2>Box address</h2>
   <input id="address" type="url" placeholder="https://box.example.com/api" autocomplete="off">
-  <div class="row"><button id="save">Save and check</button><span id="status"></span></div>
 
-  <h2>Parts</h2>
-  <table id="parts"></table>
+  <h2>Sources</h2>
+  <p class="bad">The code of every source runs with all of this extension's permissions: every site, its cookies and its requests. Add only a file on a protected branch that no agent can push to.</p>
+  <div id="sources"></div>
+  <div class="row"><button id="add">Add source</button><button id="save">Save and check</button><span id="saved"></span></div>
+
+  <h2>Loaded</h2>
+  <table id="loaded"></table>
 
   <h2>Shortcuts</h2>
   <table id="shortcuts"></table>

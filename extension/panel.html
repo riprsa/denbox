@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Box</title>
+<link rel="stylesheet" href="stock.css">
+<style>
+  body { line-height: 1.45; font-variant-numeric: tabular-nums; }
+  main { max-width: 760px; }
+  section { margin-bottom: 16px; }
+  h2 { display: flex; gap: 12px; align-items: baseline; margin: 0 0 4px; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 1px 16px 1px 0; white-space: nowrap; vertical-align: baseline; }
+  td.wide { width: 100%; white-space: normal; }
+  td.num { text-align: right; }
+  button { padding: 0 6px; }
+  .down { color: var(--bad); }
+  meter { width: 120px; height: 6px; vertical-align: middle; background: #1a1a1a; border: 0; }
+  meter::-webkit-meter-bar { background: #1a1a1a; border: 0; border-radius: 0; height: 6px; }
+  meter::-webkit-meter-optimum-value { background: #fff; border-radius: 0; }
+</style>
+</head>
+<body>
+  <main>
+    <p id="error" class="bad" hidden></p>
+    <section><h2>System</h2><div id="system"></div></section>
+    <section><h2>Services <button id="restart-all">Restart all</button><span id="services-note"></span></h2><div id="services"></div></section>
+    <section><h2>Ports</h2><div id="ports"></div></section>
+  </main>
+  <script src="bundle.js"></script>
+  <script src="panel.js"></script>
+</body>
+</html>

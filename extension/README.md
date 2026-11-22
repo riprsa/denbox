@@ -1,66 +1,117 @@
 # Denbox extension
 
 A Manifest V2 extension for Chromium browsers that still run MV2 (Helium, for
-one). It holds no feature of its own: it fetches the bundle of one box from
-that box's `denbox-api` and runs it. Everything it shows comes from the
-bundle's parts, such as the kit's `panel` (`kit/browser/panel`).
+one). It has a page of its own, the panel, that shows one box's state and
+sends it restarts and toggles. Every other feature is a part of a bundle that
+the extension loads from a Git source.
 
-Bundle code runs with all of this extension's permissions. Point it only at a
-box you trust.
+Its options hold two separate things:
+
+- **The box address**, where the box's `denbox-api` answers. The box supplies
+  data only. The panel and the parts read it as data and never run it.
+- **Sources**, each a URL of one bundle with an optional token. The code of a
+  source runs with all of this extension's permissions (see Sources).
+
+The extension id is `obadaankgmebnmebkimmlmfmjmipjkld`, fixed by the `key` in
+`manifest.json`. No private key for it exists: the extension is only ever
+loaded unpacked, so none is needed.
 
 ## Install
 
 1. Copy this folder somewhere it can stay.
 2. Open `chrome://extensions`, turn on Developer mode, **Load unpacked**, pick
    the folder.
-3. In the extension's options set the box API's address, for example
-   `https://box.example.com/api`, and press **Save and check**.
+3. In the extension's options set the box address, for example
+   `https://box.example.com/api`, add the sources you want and press
+   **Save and check**.
 
-The extension checks the box every 5 minutes and on **Save and check**. It
-sends every request with the header `x-denbox-api: 1` and the profile's
-cookies, so a front door behind the profile's login works.
+The panel works with the box address alone. It is the first entry of the
+toolbar popup. Requests to the box carry the header `x-denbox-api: 1` and the
+profile's cookies, so a front door behind the profile's login works.
 
 **Updates of the extension itself.** Copy a new version of this folder over the
 old one. Every 5 minutes the extension compares `version` in the manifest on
 disk with the one it runs and reloads itself when they differ. Bump `version`
 with every change.
 
-The manifest `key` is the one of the extension Denbox replaces, so the
-extension id, and every origin and native messaging host that trusts it, stays
-the same.
+## Sources
+
+A source is the URL of one bundle file. The extension fetches every source
+every 5 minutes and on **Save and check**.
+
+- **What makes a URL safe.** The file is on a protected branch of a Git
+  repository, and no agent can push to that branch or merge into it. Then only
+  a person's merge changes what runs in the browser. A raw file URL of the
+  environment's `main` is the usual choice, for example
+  `https://raw.githubusercontent.com/example/environment/main/browser/bundle.json`.
+  A box, anything an agent can write to, or a branch agents can push to is not
+  a source: the code would run in every signed-in session of the profile.
+- **Refused.** A source must be `https:` and must not be on the host of the
+  box address, on any port. The options page will not save such a source, and the loader
+  skips one that is already stored. A redirect is held to the same rules.
+- **Login.** Without a token the request carries the profile's cookies for the
+  source's host, so a file behind the profile's login works. With a token it
+  carries `authorization: Bearer <token>` and no cookies. A token goes only to
+  its own source, never to the box or to another source.
+- **Each source on its own.** Each keeps its own stored bundle and status. A
+  source that fails to load, or gives a bundle that does not parse, leaves its
+  previous bundle running, and the options page shows why. Removing a source
+  drops its parts.
+- **Applying.** A changed bundle is stored and applied by reloading the
+  extension, so every part starts clean; the alarms parts made are cleared.
+  The stored bundles run on the next start, also without network.
 
 ## Bundle
-
-`GET <address>/bundle.json` answers
 
 ```json
 {
   "version": 1,
   "parts": {
-    "panel": {
+    "notes": {
       "background": "code",
       "content": [{ "matches": ["https://*.example.com/*"], "js": "code" }],
-      "pages": { "panel": { "html": "<title>Box</title>...", "js": "code" } }
+      "pages": { "notes": { "html": "<title>Notes</title>...", "js": "code" } }
     }
   }
 }
 ```
 
-Every field of a part is optional. 404 means the box has no parts; the
-extension then runs nothing.
+Every field of a part is optional.
 
-- A changed bundle is stored and applied by reloading the extension, so every
-  part starts clean. The stored copy runs on the next start, also while the
-  box is unreachable.
-- A bundle that does not parse (not JSON, not version 1, a field of the wrong
-  type) is not stored. The running one keeps running, and the options page
-  shows why.
+- A part name is unique across sources. A second part of the same name, in
+  source order, is reported in the options page and not started.
 - Each part starts on its own. A part whose code does not compile, throws or
   rejects is recorded as failed in the options page; the other parts keep
   running.
 - `content` scripts run in the top frame of a tab whose address matches one of
   `matches` (`*` matches anything) once the page has loaded, via
   `tabs.executeScript`.
+
+### Building a bundle
+
+`denbox.lib.mkBundle pkgs parts` builds the file from parts given as files,
+the same shape with paths in place of text:
+
+```nix
+bundle = denbox.lib.mkBundle pkgs {
+  notes = {
+    background = ./browser/notes/background.js;
+    content = [{ matches = [ "https://*.example.com/*" ]; js = ./browser/notes/content.js; }];
+    pages.notes = { html = ./browser/notes/notes.html; js = ./browser/notes/notes.js; };
+  };
+};
+```
+
+The source repository exposes it, say as `packages.${system}.bundle`, and
+commits the built file, so the URL serves it as is:
+`nix build .#bundle && cp result browser/bundle.json`. Its CI fails when the
+committed file is not what the parts build, for example with a check
+
+```nix
+checks.${system}.bundle = pkgs.runCommand "bundle-is-built" { } ''
+  diff ${bundle} ${./browser/bundle.json} && touch $out
+'';
+```
 
 ## What a part gets
 
@@ -79,18 +130,19 @@ their own.
 | Field | Meaning |
 | --- | --- |
 | `part` | the part's name |
-| `address` | the box API's address, without a trailing `/` |
+| `address` | the box address, without a trailing `/` |
 | `api(path)` | `GET` of the box API; answers the parsed JSON |
 | `api(path, body)` | `POST` of `body` as JSON |
 | `hold(reason)` | background only: keeps the extension from reloading (a bundle update or a new version on disk) until the returned function is called |
 
-`api` throws with the server's `error` on a reply that is not 2xx. `hold` is
-for work a reload would cut short, such as a recording.
+`api` throws with the server's `error` on a reply that is not 2xx. What it
+answers is data from the box: put it into a page as text, never as markup,
+a URL or code. `hold` is for work a reload would cut short, such as a
+recording.
 
 A part's background starts once per start of the extension, so it should not
 wait for `runtime.onInstalled` or `onStartup`. It keeps its storage under its
-own prefix (`<part>:`) and leaves `denbox:*` alone. Alarms are cleared when
-the box drops its bundle.
+own prefix (`<part>:`) and leaves `denbox:*` alone.
 
 ### Pages
 
@@ -100,9 +152,9 @@ the extension's `stock.css`. Inline `<script>` does not run: the page's code
 is its `js`. Anything after `#PART/PAGE/` is the page's own; the page reloads
 when the hash changes.
 
-**Popup.** The toolbar popup lists every page of every part, named by its
-`<title>` (else `PART/PAGE`), and opens the chosen one in a new tab. That is
-the whole mechanism: a part shows up in the popup by having a page.
+**Popup.** The toolbar popup lists the panel, then every page of every running
+part, named by its `<title>` (else `PART/PAGE`), and opens the chosen one in a
+new tab. A part shows up in the popup by having a page.
 
 **Shortcuts.** Manifest `commands` cannot come from a bundle, so the manifest
 has four slots, `shortcut-1` to `shortcut-4`, with no keys suggested. A part
@@ -121,10 +173,11 @@ The environment decides which part uses which slot. The person binds keys at
 
 | Key | Holds |
 | --- | --- |
-| `denbox:address` | the box API's address |
-| `denbox:bundle` | the text of the running bundle |
-| `denbox:status` | `{ checkedAt, error? }` of the last check |
-| `denbox:started` | `{ at, error?, parts: { NAME: { state, error? } } }`, state `starting`, `running` or `failed` |
+| `denbox:address` | the box address |
+| `denbox:sources` | `[{ url, token? }]` |
+| `denbox:bundles` | `{ URL: text }`, the bundle each source last gave |
+| `denbox:status` | `{ URL: { checkedAt, error? } }` of the last check |
+| `denbox:started` | `{ at, parts: [{ source, name, state, error? }] }`, state `starting`, `running`, `failed` or `skipped` |
 | `denbox:check` | written by the options page to check now |
 
 ## Tests
@@ -134,4 +187,5 @@ node --test 'extension/tests/*.test.cjs'
 ```
 
 `tests/harness.cjs` runs the background scripts in a node context with a fake
-`chrome` and `fetch`.
+`chrome` and `fetch`. `tests/panel.test.cjs` runs the panel against a fake DOM
+that refuses markup.

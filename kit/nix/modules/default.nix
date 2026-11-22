@@ -4,7 +4,6 @@
   imports = [
     ./services.nix
     ./api.nix
-    ./browser.nix
     ./secrets.nix
     ./follow.nix
     ./tools.nix
