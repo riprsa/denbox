@@ -1,0 +1,36 @@
+# Rendered by deploy/render from what the box asks of its host; do not edit.
+[Unit]
+Description=denbox box personal
+
+[Container]
+ContainerName=denbox-personal
+Image=ghcr.io/riprsa/denbox:latest
+# T3 Code labels the environment with the hostname.
+HostName=personal
+Volume=denbox-personal-home.volume:/root
+Volume=denbox-personal-nix.volume:/nix
+# The bootstrap; Z gives the files a label of this container where SELinux is on.
+Volume=./bootstrap.json:/run/secrets/denbox_bootstrap:ro,Z
+Volume=./git_token:/run/secrets/denbox_git_token:ro,Z
+Volume=/srv/data:/data:ro
+Volume=/srv/cache:/root/cache
+Tmpfs=/run/denbox:mode=0700
+# Nix builds run scripts in /tmp; a tmpfs is noexec unless it says exec.
+Tmpfs=/tmp:mode=1777,exec,size=4g
+PublishPort=127.0.0.1:13773:3773
+PublishPort=0.0.0.0:8080:8080
+AddDevice=/dev/net/tun
+AddCapability=CAP_NET_ADMIN
+DNS=1.1.1.1
+DNS=9.9.9.9
+# s6 gives each service up to 35 seconds to stop.
+PodmanArgs=--cpus=0.5 --memory=8g --pids-limit=4096 --shm-size=2g --stop-timeout=60
+
+[Service]
+Restart=always
+# The first start may pull the image.
+TimeoutStartSec=900
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target

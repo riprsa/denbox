@@ -4,6 +4,12 @@
 let
   cfg = config.denbox;
   api = kit.denbox-api;
+  # "HOST:PORT", the host possibly a bracketed IPv6 address.
+  parts = builtins.match "(.*):([0-9]+)" cfg.api.address;
+  listen = if parts == null then throw "denbox.api.address: \"${cfg.api.address}\" is not HOST:PORT" else {
+    host = builtins.head parts;
+    port = lib.toInt (lib.last parts);
+  };
 in
 {
   options.denbox.api = {
@@ -27,6 +33,11 @@ in
 
   # denbox-api calls `denbox service`, found on the box's PATH.
   config = lib.mkIf cfg.api.enable {
+    # The host publishes the API's port when it listens beyond the box's
+    # loopback; on loopback it is reachable only from inside the box.
+    denbox.host.ports = lib.mkIf (!lib.hasPrefix "127." listen.host && listen.host != "localhost" && listen.host != "[::1]") {
+      api.port = listen.port;
+    };
     denbox.services.denbox-api = pkgs.writeShellScript "denbox-api-service" ''
       export PATH=${lib.makeBinPath [ pkgs.iproute2 pkgs.coreutils ]}:$PATH
       export DENBOX_API_ADDRESS=${lib.escapeShellArg cfg.api.address}

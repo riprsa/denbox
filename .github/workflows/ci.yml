@@ -1,5 +1,7 @@
 # Runs the flake's checks: the package builds (Go tests included), the module
-# check and the box builds, the template's among them.
+# check and the box builds, the template's among them. On main, after they
+# pass, pushes the kit's own packages to the binary cache (docs/design.md,
+# Binary cache).
 name: ci
 
 on:
@@ -17,3 +19,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - run: nix flake check -L
+      # Pull requests, forks included, never get here and never need the secret.
+      # Only x86_64-linux is built. aarch64-linux would need an arm64 runner
+      # (ubuntu-24.04-arm) running these steps with .#packages.aarch64-linux.*.
+      - name: Push the kit's packages to the cache
+        if: github.event_name == 'push' && github.repository == 'riprsa/denbox'
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          # Only what this repository builds from source, with its runtime
+          # closure. Never T3 Code, Codex or Claude Code: every box fetches
+          # them from their vendors, and this cache must not redistribute them.
+          built=$(nix build --no-link --print-out-paths .#denbox-api .#runtime)
+          mapfile -t paths <<<"$built"
+          closure=$(nix path-info --recursive "${paths[@]}")
+          if grep -E -- '-(t3|codex|claude-code|claude)-[0-9]' <<<"$closure"; then
+            echo 'A vendor binary is in the closure; nothing is pushed' >&2
+            exit 1
+          fi
+          echo "$closure"
+          nix run --inputs-from . nixpkgs#cachix -- push denbox "${paths[@]}"
