@@ -36,7 +36,7 @@ runCommand "denbox-boxes-check" { } ''
   bin=${full}/home-path/bin
   [[ $(readlink "$files/.config/denbox/services/t3/run") == ${services.t3} ]] || fail "t3: wrong run link"
   grep -q ' t3 -- .*/bin/t3 serve' ${services.t3} || fail "t3: not started through the provider"
-  grep -q '"example":true' $(grep -o '/nix/store/[^ ]*-t3-settings.json' ${services.t3}) \
+  grep -q '"example": *true' $(grep -o '/nix/store/[^ ]*-t3-settings.json' ${services.t3}) \
     || fail "t3: settings not merged"
 
   [[ -x $files/.config/denbox/shell ]] && grep -q ' shell -- .*/bin/fish' "$files/.config/denbox/shell" \
