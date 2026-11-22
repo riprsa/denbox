@@ -59,10 +59,26 @@ jq -n '{version: 2, repository: "file:///srv/environment", ref: "main", box: "te
 
 "$cli" volume create "$home" > /dev/null
 "$cli" volume create "$store" > /dev/null
-"$cli" create --name "$name" --network none --memory 1g --cpus 2 --pids-limit 1024 \
-  --tmpfs /run/denbox:mode=0700 -v "$home:/root" -v "$store:/nix" "$image" > /dev/null
+# Rootless Podman can set a limit only through a cgroup controller that
+# systemd delegated to the user; a limit without one fails the start.
+limits=(--memory 1g --cpus 2 --pids-limit 1024)
+if [[ $cli == podman ]]; then
+  rootless=$(podman info --format '{{.Host.Security.Rootless}}')
+  controllers=" $(podman info --format '{{range .Host.CgroupControllers}}{{.}} {{end}}')"
+  if [[ $rootless == true ]]; then
+    limits=()
+    [[ $controllers != *" memory "* ]] || limits+=(--memory 1g)
+    [[ $controllers != *" cpu "* ]] || limits+=(--cpus 2)
+    [[ $controllers != *" pids "* ]] || limits+=(--pids-limit 1024)
+  fi
+  echo "# Podman, rootless $rootless, controllers${controllers% }, limits: ${limits[*]:-none}"
+fi
+# /tmp as the standard deployment mounts it: a tmpfs that allows exec.
+"$cli" create --name "$name" --network none "${limits[@]}" \
+  --tmpfs /run/denbox:mode=0700 --tmpfs /tmp:mode=1777,exec \
+  -v "$home:/root" -v "$store:/nix" "$image" > /dev/null
 # As root's files whoever runs this test: Git refuses a repository that
-# another user owns, and "$cli" cp keeps the owner of what it copies.
+# another user owns, and the cp command keeps the owner of what it copies.
 tar -C "$tmp/srv" --owner=0 --group=0 -c . | "$cli" cp - "$name:/srv"
 tar -C "$tmp" --owner=0 --group=0 -c secrets | "$cli" cp - "$name:/run"
 "$cli" start "$name" > /dev/null
@@ -86,6 +102,10 @@ box timeout 20 denbox supervise 2>/dev/null || result=$?
 [[ $result == 75 ]] || fail "a second supervise exited $result"
 box denbox service status worker | grep '^worker: up ' > /dev/null || fail 'worker not up after a second supervise'
 [[ $(box denbox shell -c 'echo ok') == ok ]] || fail 'denbox shell'
+# The limits reach the box's cgroup, and /tmp is a tmpfs that allows exec.
+[[ " ${limits[*]} " != *" --memory 1g "* || $(box cat /sys/fs/cgroup/memory.max) == 1073741824 ]] || fail 'memory limit'
+[[ " ${limits[*]} " != *" --pids-limit 1024 "* || $(box cat /sys/fs/cgroup/pids.max) == 1024 ]] || fail 'pids limit'
+[[ $(box stat -f -c %T /tmp) == tmpfs ]] || fail '/tmp is not a tmpfs'
 in_box 'printf "#!/bin/sh\necho ok\n" > /tmp/exec && chmod +x /tmp/exec && [ "$(/tmp/exec)" = ok ]' || fail '/tmp is noexec'
 
 echo '# a new commit is applied by sync --once'

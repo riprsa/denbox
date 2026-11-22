@@ -70,7 +70,7 @@ jq -n '{version: 2, repository: "file:///srv/environment", ref: "main", box: "ma
   --tmpfs /run/denbox:mode=0700 --tmpfs /tmp:mode=1777,exec \
   -v "$home:/root" -v "$store:/nix" "$image" > /dev/null
 # As root's files whoever runs this test: Git refuses a repository that
-# another user owns, and "$cli" cp keeps the owner of what it copies.
+# another user owns, and the cp command keeps the owner of what it copies.
 tar -C "$tmp/srv" --owner=0 --group=0 -c . | "$cli" cp - "$name:/srv"
 tar -C "$tmp" --owner=0 --group=0 -c secrets | "$cli" cp - "$name:/run"
 "$cli" start "$name" > /dev/null

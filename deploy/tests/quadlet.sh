@@ -56,7 +56,7 @@ jq -n --arg srv "$tmp/srv" '{binds: [{source: $srv, target: "/srv", readOnly: tr
 echo "# Podman's generator accepts the units"
 QUADLET_UNIT_DIRS=$tmp/units /usr/libexec/podman/quadlet -dryrun -user > "$tmp/generated" ||
   fail "quadlet refused the units: $(cat "$tmp/generated")"
-grep -q "denbox-$name.service" "$tmp/generated" || fail "no service generated: $(cat "$tmp/generated")"
+grep -q "^ExecStart=.*podman run .*--name=denbox-$name " "$tmp/generated" || fail "no service generated: $(cat "$tmp/generated")"
 
 echo '# the box starts as a user service and applies its environment'
 mkdir -p "$units"
@@ -70,8 +70,11 @@ for ((attempt = 0; ; attempt++)); do
 done
 [[ $(podman exec "denbox-$name" cat /root/worker-version) == '1 main-1' ]] || fail 'wrong version'
 [[ $(podman exec "denbox-$name" hostname) == "$name" ]] || fail 'wrong hostname'
-podman exec "denbox-$name" sh -c 'test "$(cat /sys/fs/cgroup/pids.max)" = 2048' ||
-  echo "# note: the pids limit is not 2048 in the box: $(podman exec "denbox-$name" cat /sys/fs/cgroup/pids.max)"
+# The limits need the controllers delegated to the user.
+[[ $(podman exec "denbox-$name" cat /sys/fs/cgroup/memory.max) == 2147483648 ]] || fail 'memory limit'
+[[ $(podman exec "denbox-$name" cat /sys/fs/cgroup/pids.max) == 2048 ]] || fail 'pids limit'
+[[ $(podman exec "denbox-$name" cat /sys/fs/cgroup/cpu.max) == '200000 100000' ]] || fail 'cpu limit'
+[[ $(podman exec "denbox-$name" stat -f -c %T /tmp) == tmpfs ]] || fail '/tmp is not a tmpfs'
 
 echo '# stopping the service keeps the volumes'
 systemctl --user stop "denbox-$name.service"
