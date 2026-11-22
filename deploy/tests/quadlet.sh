@@ -48,7 +48,7 @@ jq -n '{version: 2, repository: "file:///srv/environment", ref: "main", box: "te
 
 # What the fixture box asks for: the defaults, no ports, the repositories.
 jq -n --arg srv "$tmp/srv" '{binds: [{source: $srv, target: "/srv", readOnly: true}], capabilities: [],
-  cpus: 2, devices: [], dns: [], memory: "2g", pids: 2048, ports: {}, shmSize: "64m", tmpSize: null}' \
+  cpus: 2, devices: [], dns: [], memory: "2g", pids: 2048, ports: {}, secrets: {}, shmSize: "64m", tmpSize: null}' \
   > "$tmp/host.json"
 "$root/deploy/render" --format quadlet --name "$name" --image "$image" \
   --bootstrap "$tmp/files/bootstrap.json" --token "$tmp/files/git_token" --output "$tmp/units" "$tmp/host.json"
