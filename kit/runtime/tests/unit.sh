@@ -292,6 +292,13 @@ starts=$(count "$FAKE/worker-starts")
 wait_for '[[ $(count "$FAKE/worker-starts") == $((starts + 1)) ]]'
 if "$denbox" service restart nothing 2>/dev/null; then fail 'unknown service accepted'; fi
 
+echo '# a second supervisor is refused and the first keeps its services'
+pid=$("$denbox" service status worker | sed -n 's/.*up (pid \([0-9]*\).*/\1/p')
+result=0
+timeout 20 "$denbox" supervise 2>/dev/null || result=$?
+[[ $result == 75 ]] || fail "a second supervise exited $result"
+[[ $("$denbox" service status worker | sed -n 's/.*up (pid \([0-9]*\).*/\1/p') == "$pid" ]] || fail 'the worker was restarted'
+
 echo '# a restart without network comes back from the applied state'
 s6-svscanctl -t "$DENBOX_RUN/services"
 wait "$supervisor" || true

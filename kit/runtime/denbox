@@ -44,6 +44,14 @@ usage() {
 # supervise: lays out the s6 scan directory, restores the last applied
 # services without network, and becomes s6-svscan.
 supervise() {
+  # One supervisor per box. A second one over the same directory would take
+  # the services away from the first; a running one answers on its control pipe.
+  if s6-svscanctl -a "$services" 2>/dev/null; then
+    echo "This box is already supervised; see 'denbox service status'" >&2
+    exit 75
+  fi
+  # What an earlier supervisor left behind, when $run outlived it.
+  rm -rf -- "$services"
   mkdir -p "$services" "$state"
   chmod 0700 "$run"
   service_dir "$sync_service"

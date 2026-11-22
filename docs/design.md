@@ -123,7 +123,7 @@ The kit knows nothing about a particular proxy, vault or cluster.
 
 One command, `denbox`, replaces the set of commands the predecessor had:
 
-    denbox supervise                      PID 1 after tini: s6 over the services and the sync loop
+    denbox supervise                      PID 1 after tini: s6 over the services and the sync loop; refused while one runs
     denbox sync [--once]                  fetch, build, activate, reconcile services
     denbox service status [NAME]
     denbox service start|stop|restart NAME
@@ -308,7 +308,7 @@ kit/nix/packages/         pins and builds: denbox-api, the browser bundle, t3, c
 kit/nix/checks/           flake checks beyond the package builds
 kit/runtime/              the denbox command
 extension/                the browser extension, the panel included
-image/                    Dockerfile and its init
+image/                    Dockerfile, the denbox launcher, root's login shell
 deploy/, install.sh       standard Compose deployment and installer
 template/                 what `nix flake init -t github:riprsa/denbox` writes
 docs/                     this file
