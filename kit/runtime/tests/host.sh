@@ -74,7 +74,11 @@ as 'grep -q " applied " ~/.local/state/denbox/status' || fail 'the first sync fa
 
 echo '# its service and the sync loop run under s6, found by the runtime as the user'
 wait_for 60 'denbox service status worker | grep -q "^worker: up "'
-as 'denbox service status denbox-sync' | grep -q '^denbox-sync: up ' || fail 'sync loop not supervised'
+# The first activation installs the box's own runtime; the sync loop exits
+# so that s6 starts it, a few seconds later.
+wait_for 60 'denbox service status denbox-sync | grep -q "^denbox-sync: up "'
+wait_for 60 'tr "\0" " " < /proc/$(denbox service status denbox-sync | sed -n "s/.*up (pid \([0-9]*\).*/\1/p")/cmdline |
+  grep -q "/.nix-profile/bin/denbox sync"'
 [[ $(as 'denbox shell -c "id -un"') == "$user" ]] || fail 'denbox shell'
 
 echo '# a new commit is applied'
