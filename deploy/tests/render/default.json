@@ -1,0 +1,1 @@
+{"binds":[],"capabilities":[],"cpus":2,"devices":[],"dns":[],"memory":"4g","pids":2048,"ports":{"api":{"address":"127.0.0.1","hostPort":48099,"port":48099},"t3":{"address":"127.0.0.1","hostPort":3773,"port":3773}},"shmSize":"64m","tmpSize":null}

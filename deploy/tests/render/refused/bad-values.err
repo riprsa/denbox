@@ -1,0 +1,4 @@
+denbox render: cannot express what the box asks for:
+memory "4 GB" is not a size such as 4g
+devices ["/etc/passwd"] are not paths under /dev
+capabilities ["CAP_NET_ADMIN"] are not names such as NET_ADMIN

@@ -1,0 +1,41 @@
+# Rendered by deploy/render from what the box asks of its host; do not edit.
+# The volumes are external so that `docker compose down -v` cannot delete them.
+name: "denbox-personal"
+services:
+  box:
+    image: "ghcr.io/riprsa/denbox:latest"
+    # T3 Code labels the environment with the hostname.
+    hostname: "personal"
+    restart: unless-stopped
+    secrets: [denbox_bootstrap, denbox_git_token]
+    volumes:
+      - home:/root
+      - nix:/nix
+    tmpfs:
+      - /run/denbox:mode=0700
+      # Nix builds run scripts in /tmp; a tmpfs is noexec unless it says exec.
+      - "/tmp:mode=1777,exec"
+    ports:
+      - "127.0.0.1:48099:48099"
+      - "127.0.0.1:3773:3773"
+    cpus: 2
+    mem_limit: 4g
+    pids_limit: 2048
+    shm_size: 64m
+    # s6 gives each service up to 35 seconds to stop.
+    stop_grace_period: 60s
+    logging:
+      driver: local
+      options: {max-size: 10m, max-file: "3"}
+secrets:
+  denbox_bootstrap:
+    file: "./bootstrap.json"
+  denbox_git_token:
+    file: "./git_token"
+volumes:
+  home:
+    name: "denbox-personal-home"
+    external: true
+  nix:
+    name: "denbox-personal-nix"
+    external: true

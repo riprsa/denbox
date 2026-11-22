@@ -1,0 +1,2 @@
+denbox render: cannot express what the box asks for:
+the declaration has the keys ["binds","capabilities","cpus","devices","dns","memory","pids","ports","shmSize","sysctls","tmpSize"], not those of denbox.host this script knows

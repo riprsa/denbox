@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# Turns what a box asks of its host (`nix eval --json <flake>#boxes.<box>.host`)
+# into a deployment of that box, or into words for the person who decides
+# whether to start it (docs/design.md, What a box asks of its host).
+#
+#   render --format compose --name NAME --image IMAGE --bootstrap FILE --token FILE [HOST]
+#   render --format quadlet --name NAME --image IMAGE --bootstrap FILE --token FILE --output DIR [HOST]
+#   render --explain --name NAME [HOST]
+#
+# HOST is the JSON file, standard input when it is missing or -. NAME names
+# the container denbox-NAME and its volumes denbox-NAME-home and
+# denbox-NAME-nix. FILE are the bootstrap and the token file, absolute, or
+# relative to the Compose project directory or to the directory of the units.
+#
+# compose prints one Compose file. quadlet writes denbox-NAME.container and
+# the two .volume units to DIR. --explain prints what the box asks for, what
+# weakens its isolation from the host first, marked with `!`. A value this
+# script cannot express exactly, a key it does not know included, is refused
+# with exit status 65; it is never dropped. Needs bash and jq.
+
+# shellcheck disable=SC2016 # the programs in single quotes are jq, with jq variables
+set -euo pipefail
+
+fail() { printf 'denbox render: %s\n' "$1" >&2; exit "${2:-64}"; }
+# usage: the comment at the top of this file.
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0" >&2; exit 64; }
+
+format='' name='' image='' bootstrap='' token='' output='' input=-
+while (($#)); do
+  case $1 in
+    --explain) format=explain; shift; continue ;;
+    --format|--name|--image|--bootstrap|--token|--output) [[ $# -ge 2 ]] || usage ;;
+    -) input=-; shift; continue ;;
+    -*) usage ;;
+    *) input=$1; shift; continue ;;
+  esac
+  case $1 in
+    --format) format=$2 ;;
+    --name) name=$2 ;;
+    --image) image=$2 ;;
+    --bootstrap) bootstrap=$2 ;;
+    --token) token=$2 ;;
+    --output) output=$2 ;;
+  esac
+  shift 2
+done
+
+command -v jq > /dev/null || fail 'jq is not installed'
+case $format in
+  compose|quadlet|explain) ;;
+  *) usage ;;
+esac
+[[ $name =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail "Not a box name (lowercase letters, digits, _ and -): $name"
+if [[ $format != explain ]]; then
+  [[ $image =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]] || fail "Not an image reference: $image"
+  # The characters Compose, Podman and systemd read as syntax are out.
+  for file in "$bootstrap" "$token"; do
+    [[ $file =~ ^[A-Za-z0-9._/@+-]+$ ]] || fail "Not a path this script can write without quoting: '$file'"
+  done
+fi
+[[ $format != quadlet || -n $output ]] || fail '--format quadlet needs --output DIR'
+[[ $format == quadlet || -z $output ]] || fail '--output is for --format quadlet only'
+
+host=$(cat -- "$input") || fail "Cannot read $input"
+
+# The checks, as one problem per line; none when the declaration is one this
+# script expresses exactly. The patterns are those of kit/nix/modules/host.nix.
+checks='
+  def path: type == "string" and test("^/[A-Za-z0-9._/@+-]*$");
+  def size: type == "string" and test("^[1-9][0-9]*[kmg]$");
+  def ipv4: type == "string" and test("^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$");
+  def port: type == "number" and . == floor and . >= 1 and . <= 65535;
+  def keys_are($k): type == "object" and (keys == ($k | sort));
+  def list(f): type == "array" and all(.[]; f);
+  # Paths the deployment itself mounts; a bind there would hide it.
+  def reserved: . as $t | ["/root", "/nix", "/tmp", "/dev/shm", "/run/denbox", "/run/secrets"] | any(. == $t);
+  if keys_are(["ports", "memory", "cpus", "pids", "tmpSize", "shmSize", "devices", "capabilities", "binds", "dns"]) | not then
+    "the declaration has the keys \(if type == "object" then keys else type end), not those of denbox.host this script knows"
+  else
+    (.ports | if type != "object" then "ports is not an object" else
+      (to_entries[] | .key as $n | .value |
+        if keys_are(["port", "hostPort", "address"]) | not then "port \($n): not a port, address and host port"
+        elif (.port | port) and (.hostPort | port) and (.address | ipv4) | not then "port \($n): \(tojson) is not valid"
+        else empty end),
+      ([.[] | select(.address | ipv4?)] | group_by(.hostPort)[] |
+        select(length > 1 and (any(.address == "0.0.0.0") or (map(.address) | unique | length) < length)) |
+        "host port \(.[0].hostPort) is published twice")
+    end),
+    (if .memory | size then empty else "memory \(.memory | tojson) is not a size such as 4g" end),
+    (if .shmSize | size then empty else "shmSize \(.shmSize | tojson) is not a size such as 64m" end),
+    (if .tmpSize == null or (.tmpSize | size) then empty else "tmpSize \(.tmpSize | tojson) is not a size such as 1g" end),
+    (if (.cpus | type) == "number" and .cpus > 0 then empty else "cpus \(.cpus | tojson) is not a positive number" end),
+    (if .pids | type == "number" and . == floor and . > 0 then empty else "pids \(.pids | tojson) is not a positive integer" end),
+    (if .devices | list(type == "string" and test("^/dev/[A-Za-z0-9._/@+-]+$")) then empty else "devices \(.devices | tojson) are not paths under /dev" end),
+    (if .capabilities | list(type == "string" and test("^[A-Z][A-Z0-9_]*$") and (startswith("CAP_") | not)) then empty
+     else "capabilities \(.capabilities | tojson) are not names such as NET_ADMIN" end),
+    (if .dns | list(ipv4) then empty else "dns \(.dns | tojson) are not IPv4 addresses" end),
+    (if .binds | type != "array" then "binds is not a list" else .binds[] |
+      if keys_are(["source", "target", "readOnly"]) and (.source | path) and (.target | path) and (.readOnly | type == "boolean") | not
+      then "bind \(tojson): source and target must be absolute paths of letters, digits and ._/@+-, readOnly true or false"
+      elif .target | reserved then "bind \(tojson) hides \(.target), which the deployment mounts"
+      else empty end
+    end)
+  end'
+problems=$(jq -r "$checks" <<<"$host") || fail 'The declaration is not JSON' 65
+[[ -z $problems ]] || fail "$(printf 'cannot express what the box asks for:\n%s' "$problems")" 65
+
+# What weakens the box's isolation first, then the rest.
+explain='
+  def bind: "\(.source) at \(.target)\(if .readOnly then ", read-only" else ", writable" end)";
+  def published: "port \(.value.port) as \(.value.address):\(.value.hostPort) (\(.key))";
+  ([.capabilities[] | "! capability \(.)"]
+   + [.devices[] | "! device \(.)"]
+   + [.binds[] | "! host path \(bind)"]
+   + [.ports | to_entries[] | select(.value.address | startswith("127.") | not) | "! \(published), reachable beyond this machine"]
+   + [.ports | to_entries[] | select(.value.address | startswith("127.")) | "  \(published)"]
+   + ["  memory \(.memory), \(.cpus) CPUs, \(.pids) processes",
+      "  /tmp \(.tmpSize // "up to the memory limit"), /dev/shm \(.shmSize)"]
+   + [if .dns == [] then empty else "  resolvers \(.dns | join(", "))" end])[]'
+
+# Compose: everything is checked above, so JSON strings are safe YAML.
+compose='
+  def q: tojson;
+  "# Rendered by deploy/render from what the box asks of its host; do not edit.",
+  "# The volumes are external so that `docker compose down -v` cannot delete them.",
+  "name: \("denbox-" + $name | q)",
+  "services:",
+  "  box:",
+  "    image: \($image | q)",
+  "    # T3 Code labels the environment with the hostname.",
+  "    hostname: \($name | q)",
+  "    restart: unless-stopped",
+  "    secrets: [denbox_bootstrap, denbox_git_token]",
+  "    volumes:",
+  "      - home:/root",
+  "      - nix:/nix",
+  (.binds[] | "      - \("\(.source):\(.target)\(if .readOnly then ":ro" else "" end)" | q)"),
+  "    tmpfs:",
+  "      - /run/denbox:mode=0700",
+  "      # Nix builds run scripts in /tmp; a tmpfs is noexec unless it says exec.",
+  "      - \("/tmp:mode=1777,exec\(if .tmpSize then ",size=\(.tmpSize)" else "" end)" | q)",
+  (if .ports == {} then empty else "    ports:", (.ports[] | "      - \("\(.address):\(.hostPort):\(.port)" | q)") end),
+  (if .devices == [] then empty else "    devices:", (.devices[] | "      - \("\(.):\(.)" | q)") end),
+  (if .capabilities == [] then empty else "    cap_add:", (.capabilities[] | "      - \(q)") end),
+  (if .dns == [] then empty else "    dns:", (.dns[] | "      - \(q)") end),
+  "    cpus: \(.cpus)",
+  "    mem_limit: \(.memory)",
+  "    pids_limit: \(.pids)",
+  "    shm_size: \(.shmSize)",
+  "    # s6 gives each service up to 35 seconds to stop.",
+  "    stop_grace_period: 60s",
+  "    logging:",
+  "      driver: local",
+  "      options: {max-size: 10m, max-file: \"3\"}",
+  "secrets:",
+  "  denbox_bootstrap:",
+  "    file: \($bootstrap | q)",
+  "  denbox_git_token:",
+  "    file: \($token | q)",
+  "volumes:",
+  "  home:",
+  "    name: \("denbox-\($name)-home" | q)",
+  "    external: true",
+  "  nix:",
+  "    name: \("denbox-\($name)-nix" | q)",
+  "    external: true"'
+
+# Quadlet: the .container unit. Limits go through PodmanArgs, which every
+# Podman with Quadlet reads, rather than keys only newer ones know.
+container='
+  "# Rendered by deploy/render from what the box asks of its host; do not edit.",
+  "[Unit]",
+  "Description=denbox box \($name)",
+  "",
+  "[Container]",
+  "ContainerName=denbox-\($name)",
+  "Image=\($image)",
+  "# T3 Code labels the environment with the hostname.",
+  "HostName=\($name)",
+  "Volume=denbox-\($name)-home.volume:/root",
+  "Volume=denbox-\($name)-nix.volume:/nix",
+  "# The bootstrap; Z gives the files a label of this container where SELinux is on.",
+  "Volume=\($bootstrap):/run/secrets/denbox_bootstrap:ro,Z",
+  "Volume=\($token):/run/secrets/denbox_git_token:ro,Z",
+  (.binds[] | "Volume=\(.source):\(.target)\(if .readOnly then ":ro" else "" end)"),
+  "Tmpfs=/run/denbox:mode=0700",
+  "# Nix builds run scripts in /tmp; a tmpfs is noexec unless it says exec.",
+  "Tmpfs=/tmp:mode=1777,exec\(if .tmpSize then ",size=\(.tmpSize)" else "" end)",
+  (.ports[] | "PublishPort=\(.address):\(.hostPort):\(.port)"),
+  (.devices[] | "AddDevice=\(.)"),
+  (.capabilities[] | "AddCapability=CAP_\(.)"),
+  (.dns[] | "DNS=\(.)"),
+  "# s6 gives each service up to 35 seconds to stop.",
+  "PodmanArgs=--cpus=\(.cpus) --memory=\(.memory) --pids-limit=\(.pids) --shm-size=\(.shmSize) --stop-timeout=60",
+  "",
+  "[Service]",
+  "Restart=always",
+  "# The first start may pull the image.",
+  "TimeoutStartSec=900",
+  "TimeoutStopSec=90",
+  "",
+  "[Install]",
+  "WantedBy=default.target"'
+
+# volume KIND: the .volume unit of the box's home or Nix volume. Stopping or
+# removing the box leaves the volume.
+volume() {
+  printf '%s\n' '# Rendered by deploy/render; do not edit.' \
+    '[Volume]' "VolumeName=denbox-$name-$1"
+}
+
+render() {
+  jq -r --arg name "$name" --arg image "$image" --arg bootstrap "$bootstrap" --arg token "$token" "$1" <<<"$host"
+}
+case $format in
+  explain)
+    echo "The box $name asks this host for:"
+    render "$explain"
+    ;;
+  compose) render "$compose" ;;
+  quadlet)
+    mkdir -p -- "$output"
+    render "$container" > "$output/denbox-$name.container"
+    volume home > "$output/denbox-$name-home.volume"
+    volume nix > "$output/denbox-$name-nix.volume"
+    ;;
+esac

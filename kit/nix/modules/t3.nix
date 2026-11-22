@@ -53,6 +53,10 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # The host publishes T3's port when T3 listens beyond the box's loopback.
+    denbox.host.ports = lib.mkIf (!lib.hasPrefix "127." cfg.host && cfg.host != "localhost") {
+      t3.port = cfg.port;
+    };
     home.packages = [ cfg.package ];
     # The profile's bin puts the box's tools and agent commands on T3's PATH.
     denbox.services.t3 = pkgs.writeShellScript "denbox-t3-service" ''

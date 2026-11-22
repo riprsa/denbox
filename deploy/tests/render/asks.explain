@@ -1,0 +1,10 @@
+The box personal asks this host for:
+! capability NET_ADMIN
+! device /dev/net/tun
+! host path /srv/data at /data, read-only
+! host path /srv/cache at /root/cache, writable
+! port 8080 as 0.0.0.0:8080 (web), reachable beyond this machine
+  port 3773 as 127.0.0.1:13773 (t3)
+  memory 8g, 0.5 CPUs, 4096 processes
+  /tmp 4g, /dev/shm 2g
+  resolvers 1.1.1.1, 9.9.9.9

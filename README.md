@@ -43,6 +43,23 @@ The kit's own packages come prebuilt from the binary cache
 its vendor. Set `DENBOX_BINARY_CACHE=0` in the box's environment to build them
 locally instead. See [Binary cache](docs/design.md#binary-cache).
 
+## What a box asks of its host
+
+Ports, limits, the size of `/tmp` and `/dev/shm`, devices, capabilities and
+host paths are options of the box too, under `denbox.host`, so the
+environment's repository describes everything. `deploy/render` turns them
+into a Compose file or Podman Quadlet units, and explains in words what the
+box asks for, what weakens its isolation first:
+
+```sh
+nix eval --json .#boxes.main.host > host.json
+deploy/render --explain --name main host.json
+deploy/render --format quadlet --name main --image ghcr.io/riprsa/denbox:latest \
+  --bootstrap ./bootstrap.json --token ./git_token --output ~/.config/containers/systemd host.json
+```
+
+See [docs/design.md](docs/design.md), What a box asks of its host.
+
 ## A box in a tailnet
 
 By default a box shares its host's place in the network: it is reached

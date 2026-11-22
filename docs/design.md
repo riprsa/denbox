@@ -53,6 +53,8 @@ on top of the kit's modules:
 
 - `<box>/activate` activates it.
 - `<box>.follow` is the value of `denbox.follow` (see Sync).
+- `<box>.host` is the value of `denbox.host`, what the box asks of its host
+  (see What a box asks of its host).
 - `<box>.config` is the evaluated configuration, for checks and debugging.
 
 Nix looks every attribute up under `legacyPackages.<system>` before the top
@@ -101,6 +103,13 @@ Every option lives under `denbox.`. Nothing is on unless the table says so.
 | `denbox.tailscale.acceptDns` | `true` | let the tailnet configure the box's resolver |
 | `denbox.tailscale.userspace` | `false` | run without a tunnel device, for a host that grants none; the proxy listens on `127.0.0.1:1055` |
 | `denbox.tailscale.serve.<name>` | `{ }` | a port of the box published to the tailnet: `port`, `https` (default `true`), `path` (default `/`), `to` |
+| `denbox.host.ports.<name>` | T3's and the API's, see below | `{ port, hostPort ? port, address ? "127.0.0.1" }`, published on the host |
+| `denbox.host.memory`, `.cpus`, `.pids` | `4g`, `2`, `2048` | limits of the container |
+| `denbox.host.tmpSize`, `.shmSize` | `null`, `64m` | size of the tmpfs on `/tmp` (`null`: up to the memory limit) and of `/dev/shm` |
+| `denbox.host.devices` | `[ ]` | host devices passed in, such as `/dev/net/tun` |
+| `denbox.host.capabilities` | `[ ]` | capabilities added, without `CAP_`, such as `NET_ADMIN` |
+| `denbox.host.binds` | `[ ]` | `{ source, target, readOnly ? true }`, host paths bound in |
+| `denbox.host.dns` | `[ ]` | resolvers, IPv4; empty for the host's |
 
 The kit installs an agent, starts it through the secrets provider and merges
 configuration into the files the agent owns. It does not model an agent's
@@ -372,6 +381,55 @@ a bundle from files, the same shape with paths in place of text. A repository
 that is a source commits the built file, and its CI fails when the file is not
 what its parts build.
 
+## What a box asks of its host
+
+The environment describes the box completely, and that includes what its
+container needs from the machine that runs it. `denbox.host` holds it; the
+kit's defaults are what the standard deployment gives, and a module that
+knows a requirement declares it itself: T3 Code's port as `ports.t3` when
+`denbox.t3.enable` and T3 listens beyond loopback, the API's as `ports.api`
+when `denbox.api.address` does. An environment moves such a port with
+`denbox.host.ports.t3.hostPort = 13773;` and adds its own:
+
+```nix
+denbox.host = {
+  shmSize = "2g";                     # a browser
+  devices = [ "/dev/net/tun" ];       # a tunnel
+  capabilities = [ "NET_ADMIN" ];
+  ports.web = { port = 8080; address = "0.0.0.0"; };
+  binds = [{ source = "/srv/data"; target = "/data"; }];
+};
+```
+
+Every value is typed narrowly enough that whatever evaluates can be written
+into a Compose file or a systemd unit without quoting: paths and sizes of a
+few characters, IPv4 addresses, capability names. A wrong value, or a host
+port published twice, fails the evaluation with the option's name.
+
+`nix eval --json <flake>#boxes.<name>.host` prints the declaration, and
+`deploy/render` turns it into a deployment, adding what only the host knows:
+the box's name, the image and where the bootstrap and token files are.
+
+    deploy/render --format compose --name NAME --image IMAGE --bootstrap FILE --token FILE HOST.json
+    deploy/render --format quadlet --name NAME --image IMAGE --bootstrap FILE --token FILE --output DIR HOST.json
+    deploy/render --explain --name NAME HOST.json
+
+`compose` prints one Compose file; for a box that asks for nothing special it
+is the same deployment as `deploy/compose.yaml`. `quadlet` writes the Podman
+Quadlet units `denbox-NAME.container`, `denbox-NAME-home.volume` and
+`denbox-NAME-nix.volume`. Relative file paths are relative to the Compose
+project directory, or to the directory of the units. `--explain` prints what
+the box asks for in words, with what weakens its isolation from the host
+first, each marked `!`: capabilities, devices, host paths, ports bound beyond
+loopback. The script refuses, with status 65, a declaration it cannot express
+exactly, a key it does not know included; it never drops one. It needs bash
+and jq.
+
+A change to an environment's repository must not quietly hand a container
+more of the host. A host that deploys from the declaration shows the
+explanation before it starts a box, and again whenever it differs from the
+one accepted last, and starts the box only when a person agrees.
+
 ## Hosts
 
 A box needs Linux, Nix and something that runs `denbox supervise` at start.
@@ -380,7 +438,15 @@ A box needs Linux, Nix and something that runs `denbox supervise` at start.
   is the standard deployment (home and Nix volumes, the two bootstrap
   secrets, loopback ports). `deploy/compose.tailscale.yaml` is the overlay for
   a box that joins a tailnet. An environment can add Compose overlays from
-  its repository.
+  its repository; `deploy/render --format compose` writes the deployment from
+  the box's `denbox.host` instead.
+- **Podman**, rootless or not: the same image, deployed as Quadlet units
+  from `deploy/render --format quadlet` and started as a systemd service,
+  `systemctl --user start denbox-NAME` for a user's. Rootless Podman sets a
+  memory, CPU or process limit only through a cgroup controller that systemd
+  delegates to the user; most distributions delegate memory and pids, and
+  cpu needs `Delegate=` in a drop-in for `user@.service`. On SELinux, the
+  bootstrap files are relabeled for the container; a bound host path is not.
 - **Baked image**, for short-lived boxes: the same image with one box already
   built into its store, made by the environment's CI. It starts without a
   build and without volumes.
@@ -402,7 +468,7 @@ kit/nix/checks/           flake checks beyond the package builds
 kit/runtime/              the denbox command
 extension/                the browser extension, the panel included
 image/                    Dockerfile, the denbox launcher, root's login shell
-deploy/, install.sh       standard Compose deployment and installer
+deploy/, install.sh       standard Compose deployment, deploy/render, installer
 template/                 what `nix flake init -t github:riprsa/denbox` writes
 docs/                     this file
 ```

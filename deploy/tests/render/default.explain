@@ -1,0 +1,5 @@
+The box personal asks this host for:
+  port 48099 as 127.0.0.1:48099 (api)
+  port 3773 as 127.0.0.1:3773 (t3)
+  memory 4g, 2 CPUs, 2048 processes
+  /tmp up to the memory limit, /dev/shm 64m
