@@ -14,8 +14,9 @@ import (
 )
 
 // A box with three services (code-server optional and off), three listeners
-// and a cgroup at 0.9 of 3 GiB. Every fake command appends "<name> <args>" to
-// root/calls; status reads are left out.
+// and a cgroup at 0.9 of 3 GiB, and a browser bundle. The supervisor is a fake
+// `denbox service`. Every fake command appends "<name> <args>" to root/calls;
+// status and ss reads are left out.
 type fixture struct {
 	root, optionalDir string
 	server            *httptest.Server
@@ -27,7 +28,7 @@ func newFixture(t *testing.T) *fixture {
 	fake := func(name, body string) string {
 		path := filepath.Join(root, "bin", name)
 		must(t, os.MkdirAll(filepath.Dir(path), 0o700))
-		script := fmt.Sprintf("#!/bin/sh\nset -eu\n[ \"${1:-}\" = status ] || [ \"${1:-}\" = -lntpH ] || echo \"%s $*\" >> %q\n%s\n", name, filepath.Join(root, "calls"), body)
+		script := fmt.Sprintf("#!/bin/sh\nset -eu\ncase \"$*\" in 'service status' | -lntpH) ;; *) echo \"%s $*\" >> %q ;; esac\n%s\n", name, filepath.Join(root, "calls"), body)
 		must(t, os.WriteFile(path, []byte(script), 0o700))
 		return path
 	}
@@ -53,9 +54,11 @@ func newFixture(t *testing.T) *fixture {
 		must(t, os.WriteFile(filepath.Join(proc, path), []byte(text), 0o600))
 	}
 	optional := filepath.Join(root, "optional")
+	bundle := filepath.Join(root, "bundle.json")
+	must(t, os.WriteFile(bundle, []byte(`{"version":1,"parts":{}}`), 0o600))
 	server := httptest.NewServer(New(Options{
-		Service: fake("denbox-service", `[ "$1" = status ] && printf '%s\n' 'code-server: up (pid 227) 286 seconds' 'denbox-api: up (pid 193) 286 seconds' 't3: down (exitcode 1) 3 seconds, ready 3 seconds'
-true`),
+		Service: []string{fake("denbox", `[ "$2" = status ] && printf '%s\n' 'code-server: up (pid 227) 286 seconds' 'denbox-api: up (pid 193) 286 seconds' 't3: down (exitcode 1) 3 seconds, ready 3 seconds'
+true`), "service"},
 		SS: fake("ss", `printf '%s\n' \
 'LISTEN 0 511 127.0.0.1:48099 0.0.0.0:* users:(("MainThread",pid=193,fd=18))' \
 'LISTEN 0 4096 *:1080 *:*' \
@@ -64,6 +67,7 @@ true`),
 		ProcRoot:            proc,
 		OptionalServices:    []string{"code-server"},
 		OptionalServicesDir: optional,
+		Bundle:              bundle,
 	}))
 	t.Cleanup(server.Close)
 	return &fixture{root: root, optionalDir: optional, server: server}
@@ -111,6 +115,23 @@ func TestRejectsRequestsWithoutGuardHeader(t *testing.T) {
 	}
 }
 
+func TestServesTheBundleOrNotFoundWithoutOne(t *testing.T) {
+	f := newFixture(t)
+	if code, body := f.call(t, http.MethodGet, "/bundle.json", nil, true); code != 200 || body != `{"version":1,"parts":{}}` {
+		t.Fatalf("%d %s", code, body)
+	}
+	if code, _ := f.call(t, http.MethodGet, "/bundle.json", nil, false); code != 403 {
+		t.Fatal(code)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/bundle.json", nil)
+	request.Header.Set("x-denbox-api", "1")
+	recorder := httptest.NewRecorder()
+	New(Options{}).ServeHTTP(recorder, request)
+	if recorder.Code != 404 {
+		t.Fatal(recorder.Code)
+	}
+}
+
 func TestStateReportsMachineServicesAndPorts(t *testing.T) {
 	f := newFixture(t)
 	code, body := f.call(t, http.MethodGet, "/state", nil, true)
@@ -151,7 +172,7 @@ func TestRestartValidatesSkipsOffServicesAndRestartsSelfLast(t *testing.T) {
 		t.Fatal(body)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for f.calls() != "denbox-service restart t3|denbox-service restart denbox-api" {
+	for f.calls() != "denbox service restart t3|denbox service restart denbox-api" {
 		if time.Now().After(deadline) {
 			t.Fatal(f.calls())
 		}
@@ -161,24 +182,24 @@ func TestRestartValidatesSkipsOffServicesAndRestartsSelfLast(t *testing.T) {
 
 func TestToggleSwitchesOnlyOptionalServices(t *testing.T) {
 	f := newFixture(t)
-	for _, body := range []any{map[string]any{"name": "t3", "enabled": false}, map[string]any{"name": "code-server"}, "x"} {
+	for _, body := range []any{map[string]any{"name": "t3", "on": false}, map[string]any{"name": "code-server"}, "x"} {
 		if code, _ := f.post(t, "/services/toggle", body); code != 400 {
 			t.Fatalf("%v: %d", body, code)
 		}
 	}
-	if _, body := f.post(t, "/services/toggle", map[string]any{"name": "code-server", "enabled": true}); !strings.Contains(body, `"enabled":true`) {
+	if _, body := f.post(t, "/services/toggle", map[string]any{"name": "code-server", "on": true}); !strings.Contains(body, `"enabled":true`) {
 		t.Fatal(body)
 	}
 	if entries, _ := os.ReadDir(f.optionalDir); len(entries) != 1 || entries[0].Name() != "code-server" {
 		t.Fatal(entries)
 	}
-	if _, body := f.post(t, "/services/toggle", map[string]any{"name": "code-server", "enabled": false}); !strings.Contains(body, `"enabled":false`) {
+	if _, body := f.post(t, "/services/toggle", map[string]any{"name": "code-server", "on": false}); !strings.Contains(body, `"enabled":false`) {
 		t.Fatal(body)
 	}
 	if entries, _ := os.ReadDir(f.optionalDir); len(entries) != 0 {
 		t.Fatal(entries)
 	}
-	if got := f.calls(); got != "denbox-service start code-server|denbox-service stop code-server" {
+	if got := f.calls(); got != "denbox service start code-server|denbox service stop code-server" {
 		t.Fatal(got)
 	}
 }

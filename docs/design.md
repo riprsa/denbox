@@ -202,8 +202,9 @@ Each part starts on its own; one that throws does not stop the others. A
 bundle that fails to parse leaves the previous one running.
 
 `denbox.browser.parts.<name>` in a box has the same shape as a part, with file
-paths in place of text. The kit builds the bundle from all parts at build time
-and `denbox-api` serves it. The kit ships the part `panel` (the box's state,
+paths in place of text. A part without `background` leaves the key out;
+`content` and `pages` may be empty. The kit builds the bundle from all parts at
+build time and `denbox-api` serves it. The kit ships the part `panel` (the box's state,
 services and ports, from `/state`), on when `denbox.api.enable` is. An
 environment adds its own parts next to it.
 
@@ -233,7 +234,8 @@ private repository, a token. It pulls the public image and starts Compose.
 flake.nix, flake.lock     lib.mkBoxes, homeManagerModules.default, packages, checks, templates.default
 kit/go.mod, api/, cmd/    denbox-api
 kit/nix/modules/          one file per option group
-kit/nix/packages/         pins and builds: denbox-api, t3, claude, codex, runtime
+kit/nix/packages/         pins and builds: denbox-api, the browser bundle, t3, claude, codex, runtime
+kit/nix/checks/           flake checks beyond the package builds
 kit/runtime/              the denbox command
 kit/browser/<part>/       sources of the parts the kit ships
 extension/                the browser extension

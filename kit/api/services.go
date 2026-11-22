@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -46,7 +45,7 @@ func (a *App) enabled(name string) bool {
 }
 
 func (a *App) services() ([]Service, error) {
-	out, err := run(15*time.Second, a.Service, "status")
+	out, err := a.service(15*time.Second, "status")
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +66,7 @@ func (a *App) services() ([]Service, error) {
 // which the service's run script checks, so it lasts across restarts.
 func (a *App) toggle(name string, on bool) (Service, error) {
 	if !slices.Contains(a.OptionalServices, name) {
-		return Service{}, badRequest{errors.New("not an optional service")}
+		return Service{}, badRequest("not an optional service")
 	}
 	marker := filepath.Join(a.OptionalServicesDir, name)
 	if on {
@@ -77,14 +76,14 @@ func (a *App) toggle(name string, on bool) (Service, error) {
 		if err := os.WriteFile(marker, nil, 0o600); err != nil {
 			return Service{}, err
 		}
-		if _, err := run(15*time.Second, a.Service, "start", name); err != nil {
+		if _, err := a.service(15*time.Second, "start", name); err != nil {
 			return Service{}, err
 		}
 	} else {
 		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
 			return Service{}, err
 		}
-		if _, err := run(40*time.Second, a.Service, "stop", name); err != nil {
+		if _, err := a.service(40*time.Second, "stop", name); err != nil {
 			return Service{}, err
 		}
 	}
@@ -127,10 +126,13 @@ func (a *App) restart(name string) (map[string][]string, error) {
 		names = append(names, a.SelfService)
 	}
 	if len(names) == 0 {
-		return nil, badRequest{errors.New("unknown service")}
+		return nil, badRequest("unknown service")
 	}
-	script := `sleep 1; command=$1; shift; for name; do "$command" restart "$name"; done`
-	child := exec.Command("sh", append([]string{"-c", script, "sh", a.Service}, names...)...)
+	// The arguments are the supervisor command; the names, which match
+	// serviceLine and so split safely on spaces, come in DENBOX_RESTART.
+	script := `sleep 1; for name in $DENBOX_RESTART; do "$@" restart "$name"; done`
+	child := exec.Command("sh", append([]string{"-c", script, "sh"}, a.Service...)...)
+	child.Env = append(os.Environ(), "DENBOX_RESTART="+strings.Join(names, " "))
 	child.Stdout, child.Stderr = os.Stderr, os.Stderr
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := child.Start(); err != nil {

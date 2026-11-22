@@ -10,7 +10,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -18,8 +20,9 @@ import (
 
 // Options name the commands and paths the API works with; tests substitute fakes.
 type Options struct {
-	// Service is the supervisor's CLI (`status`, `start`, `stop`, `restart NAME`).
-	Service string
+	// Service is the supervisor's command prefix, `denbox service` in a box;
+	// the API appends `status`, `start NAME`, `stop NAME` or `restart NAME`.
+	Service []string
 	// SS is iproute2's ss.
 	SS string
 	// ProcRoot holds proc/ and sys/fs/cgroup/; "/" in a box.
@@ -32,6 +35,9 @@ type Options struct {
 	OptionalServicesDir string
 	// SelfService is this API's own service, restarted last.
 	SelfService string
+	// Bundle is the browser bundle served at /bundle.json; empty when the box
+	// has no browser parts.
+	Bundle string
 }
 
 // Web pages cannot send this header cross-origin without a CORS preflight,
@@ -94,7 +100,13 @@ func (a *App) state() State {
 	return state
 }
 
-type badRequest struct{ error }
+// statusError is an error the client caused, answered with its status code.
+type statusError struct {
+	code int
+	error
+}
+
+func badRequest(message string) error { return statusError{http.StatusBadRequest, errors.New(message)} }
 
 // firstLine is an error message fit for the panel: first line, 300 characters.
 func firstLine(err error) string {
@@ -115,7 +127,7 @@ type handler func(body []byte) (any, error)
 func decode[T any](body []byte) (T, error) {
 	var value T
 	if len(body) > 0 && json.Unmarshal(body, &value) != nil {
-		return value, badRequest{errors.New("invalid JSON")}
+		return value, badRequest("invalid JSON")
 	}
 	return value, nil
 }
@@ -123,8 +135,17 @@ func decode[T any](body []byte) (T, error) {
 func (a *App) routes() map[string]handler {
 	return map[string]handler{
 		"GET /state": func([]byte) (any, error) { return a.state(), nil },
+		"GET /bundle.json": func([]byte) (any, error) {
+			if a.Bundle == "" {
+				return nil, statusError{http.StatusNotFound, errors.New("this box has no browser parts")}
+			}
+			raw, err := os.ReadFile(a.Bundle)
+			return json.RawMessage(raw), err
+		},
 		"POST /services/restart": func(body []byte) (any, error) {
-			request, err := decode[struct{ Name string }](body)
+			request, err := decode[struct {
+				Name string `json:"name"`
+			}](body)
 			if err != nil {
 				return nil, err
 			}
@@ -132,16 +153,16 @@ func (a *App) routes() map[string]handler {
 		},
 		"POST /services/toggle": func(body []byte) (any, error) {
 			request, err := decode[struct {
-				Name    string
-				Enabled *bool
+				Name string `json:"name"`
+				On   *bool  `json:"on"`
 			}](body)
 			if err != nil {
 				return nil, err
 			}
-			if request.Enabled == nil {
-				return nil, badRequest{errors.New("enabled must be true or false")}
+			if request.On == nil {
+				return nil, badRequest("on must be true or false")
 			}
-			return a.toggle(request.Name, *request.Enabled)
+			return a.toggle(request.Name, *request.On)
 		},
 	}
 }
@@ -174,8 +195,8 @@ func (a *App) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	value, err := route(body)
 	if err != nil {
 		code := http.StatusInternalServerError
-		if errors.As(err, new(badRequest)) {
-			code = http.StatusBadRequest
+		if status := new(statusError); errors.As(err, status) {
+			code = status.code
 		}
 		reply(code, failure{firstLine(err)})
 		return
@@ -189,4 +210,9 @@ func run(timeout time.Duration, command string, args ...string) (string, error) 
 	defer cancel()
 	out, err := exec.CommandContext(ctx, command, args...).Output()
 	return string(out), err
+}
+
+// service runs the supervisor command with args, such as `stop NAME`.
+func (a *App) service(timeout time.Duration, args ...string) (string, error) {
+	return run(timeout, a.Service[0], slices.Concat(a.Service[1:], args)...)
 }
