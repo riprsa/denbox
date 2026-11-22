@@ -41,6 +41,18 @@
         # `PROVIDER CONSUMER -- COMMAND [ARGS...]`; the default adds none.
         # denbox.secrets.provider = ./secrets.sh;
 
+        # The box as a node of a tailnet, with a name and an address of its
+        # own; the host grants the tunnel with deploy/compose.tailscale.yaml
+        # and hands over the key (install.sh --tailscale). Tag the node and
+        # give the tag only the access a box needs.
+        # denbox.tailscale = {
+        #   enable = true;
+        #   tags = [ "tag:denbox" ];
+        #   # T3 Code at https://<box>.<tailnet>.ts.net, denbox-api on its port 8443.
+        #   serve.t3 = { port = 443; to = "http://127.0.0.1:3773"; };
+        #   serve.api = { port = 8443; to = "http://127.0.0.1:48099"; };
+        # };
+
         # Build against the kit's current main at every sync instead of
         # waiting for this flake's lock to move.
         # denbox.follow.denbox = "github:riprsa/denbox";

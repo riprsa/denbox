@@ -59,8 +59,9 @@ RUN NIX_CONFIG="filter-syscalls = $NIX_INSTALL_FILTER_SYSCALLS" \
 COPY --chmod=0755 image/denbox /usr/local/bin/denbox
 COPY --chmod=0755 image/login /usr/local/libexec/denbox/login
 COPY --chmod=0644 image/profile.sh /etc/profile.d/denbox.sh
-# The standard deployment, which install.sh reads out of the image.
-COPY --chmod=0644 deploy/compose.yaml /usr/local/share/denbox/compose.yaml
+# The standard deployment and its Tailscale overlay, which install.sh reads
+# out of the image.
+COPY --chmod=0644 deploy/compose.yaml deploy/compose.tailscale.yaml /usr/local/share/denbox/
 
 WORKDIR /root
 # tini as PID 1 over the supervisor. The runtime clears what an earlier

@@ -2,6 +2,7 @@
 # gets them as denbox.homeManagerModules.default.
 {
   imports = [
+    ./name.nix
     ./services.nix
     ./api.nix
     ./secrets.nix
@@ -9,6 +10,7 @@
     ./tools.nix
     ./t3.nix
     ./agents.nix
+    ./tailscale.nix
     ./kit.nix
     ./runtime.nix
   ];

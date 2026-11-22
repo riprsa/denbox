@@ -92,6 +92,15 @@ Every option lives under `denbox.`. Nothing is on unless the table says so.
 | `denbox.agents.codex.config` | `{ }` | Codex configuration, passed as one `-c` override per leaf value |
 | `denbox.secrets.provider` | passthrough | see Secrets |
 | `denbox.follow` | `{ }` | flake input name to a flake reference that names its host, not a registry name (see Sync) |
+| `denbox.name` | the box's attribute name | set by `mkBoxes`; the box's name wherever one is needed |
+| `denbox.tailscale.enable` | `false` | make the box a node of a tailnet (see Tailscale) |
+| `denbox.tailscale.hostname` | `denbox.name` | the node's name in the tailnet |
+| `denbox.tailscale.loginServer` | `null` | another control server than Tailscale's, as a URL |
+| `denbox.tailscale.tags` | `[ ]` | tags the node asks for, such as `tag:denbox` |
+| `denbox.tailscale.ssh` | `false` | accept Tailscale SSH into the box |
+| `denbox.tailscale.acceptDns` | `true` | let the tailnet configure the box's resolver |
+| `denbox.tailscale.userspace` | `false` | run without a tunnel device, for a host that grants none; the proxy listens on `127.0.0.1:1055` |
+| `denbox.tailscale.serve.<name>` | `{ }` | a port of the box published to the tailnet: `port`, `https` (default `true`), `path` (default `/`), `to` |
 
 The kit installs an agent, starts it through the secrets provider and merges
 configuration into the files the agent owns. It does not model an agent's
@@ -120,6 +129,8 @@ The kit knows nothing about a particular proxy, vault or cluster.
 | `~/.local/state/denbox/logs/NAME/current` | a service's log, 10 x 1 MB |
 | `/run/denbox/` | s6 scan directory (`services/`) and locks; gone on restart, and may be `noexec` |
 | `/run/secrets/denbox_bootstrap`, `/run/secrets/denbox_git_token` | the bootstrap, mounted by the host |
+| `/run/secrets/denbox_tailscale_authkey` | the key a box joins its tailnet with, when the host gives one |
+| `~/.local/state/denbox/tailscale/` | the node's identity in the tailnet; it survives restarts with the home |
 
 One command, `denbox`, replaces the set of commands the predecessor had:
 
@@ -215,6 +226,50 @@ shells, `agents` for Claude and Codex, `t3` for T3 Code. The default provider
 adds nothing and execs the command. An environment points the option at its
 own program (a secrets broker, sops, a file reader).
 
+## Tailscale
+
+By default a box has no place in a network of its own: it is reached through
+ports its host publishes, and what it sends leaves as its host. With
+`denbox.tailscale.enable` the box is a node of a tailnet instead, a machine of
+its own with a name, an address and its own entry in the tailnet's access
+rules.
+
+- The kit runs `tailscaled` as the supervised service `tailscale` and puts a
+  `tailscale` command on PATH that talks to it, through the socket
+  `/run/denbox/tailscale/tailscaled.sock`. The node's state is in
+  `~/.local/state/denbox/tailscale/`, so a box keeps its identity across
+  restarts and image changes.
+- **Settings.** Every start of the service applies `hostname`,
+  `loginServer`, `tags`, `ssh` and `acceptDns` with `tailscale up --reset`,
+  so a setting changed by hand with `tailscale set` lasts until the next
+  start. A sync that changes an option restarts the service.
+- **Joining.** A box that is not logged in joins with the key in
+  `/run/secrets/denbox_tailscale_authkey`. The key comes from the host and
+  not through the secrets provider, because a provider may itself be reachable
+  only inside the tailnet. It is needed once; without it the service waits and
+  `tailscale login` in the box prints a URL to log in by hand (with
+  `--login-server` for another control server; the service's log names the
+  command). Whether a node
+  is short-lived is a property of the key (an ephemeral key removes the node
+  when the box is gone), not of the box.
+- **The tunnel.** By default the box has a tunnel device, so every program in
+  it reaches the tailnet without knowing, and what it sends arrives as the
+  box. The host has to grant that: `deploy/compose.tailscale.yaml` adds
+  `/dev/net/tun`, the `NET_ADMIN` capability and the key's secret. On a host
+  that grants neither, `denbox.tailscale.userspace` runs the node without a
+  device: the tailnet still reaches the box, and programs in the box reach
+  the tailnet only through the proxy `tailscaled` then offers, SOCKS5 and
+  HTTP on `127.0.0.1:1055`. A box without the device or the capability and
+  without `userspace` does not fall back: its service says why and stays down.
+- **Serving.** `denbox.tailscale.serve.<name> = { port = 443; https = true;
+  path = "/"; to = "http://127.0.0.1:3773"; }` publishes a local port to the
+  tailnet with `tailscale serve`, under the node's name and, with `https`,
+  the tailnet's certificate. Nothing is served unless the box says so: each
+  start replaces what the node serves with these entries. A served port
+  needs no port published by the host.
+- **Another control server.** `denbox.tailscale.loginServer` points the node
+  at a self-hosted control server. A box is a node of one tailnet.
+
 ## denbox-api
 
 A small Go server inside the box, reached only through the box's private front
@@ -244,6 +299,11 @@ been written by someone else. Two rules follow.
   extension runs bundles from a branch of a repository. That is a gate only
   while the branch is protected and no credential inside a box can push to it
   or merge into it. Give agents an account of their own, without that right.
+- **A box in a tailnet is still a box.** Without Tailscale of its own it
+  shares its host's place in the network and reaches whatever the host
+  reaches. As a node it can be given a tag and exactly the access a box
+  should have. Do that: joining a tailnet without rules for the box only
+  moves the problem.
 
 ## Browser
 
@@ -287,8 +347,9 @@ A box needs Linux, Nix and something that runs `denbox supervise` at start.
 
 - **Docker**, the first host. `image/` builds the image; `deploy/compose.yaml`
   is the standard deployment (home and Nix volumes, the two bootstrap
-  secrets, loopback ports). An environment can add Compose overlays from its
-  repository.
+  secrets, loopback ports). `deploy/compose.tailscale.yaml` is the overlay for
+  a box that joins a tailnet. An environment can add Compose overlays from
+  its repository.
 - **Baked image**, for short-lived boxes: the same image with one box already
   built into its store, made by the environment's CI. It starts without a
   build and without volumes.
@@ -297,6 +358,7 @@ A box needs Linux, Nix and something that runs `denbox supervise` at start.
 
 `install.sh` asks for the environment repository, the box name and, for a
 private repository, a token. It pulls the public image and starts Compose.
+With `--tailscale` it adds the overlay and asks for the key.
 
 ## Repository
 

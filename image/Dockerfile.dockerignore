@@ -5,4 +5,5 @@
 !kit
 !image
 !deploy/compose.yaml
+!deploy/compose.tailscale.yaml
 kit/runtime/tests
