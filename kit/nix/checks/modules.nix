@@ -23,12 +23,9 @@ let
   };
   inherit (box.config.denbox) services;
   expected = builtins.toJSON {
-    version = 1;
-    parts.greet = {
-      background = "start()";
-      content = [{ matches = [ "https://example.com/*" ]; js = "greet()"; }];
-      pages.options = { html = "<p>hi</p>"; js = "show()"; };
-    };
+    background = "start()";
+    content = [{ matches = [ "https://example.com/*" ]; js = "greet()"; }];
+    pages.options = { html = "<p>hi</p>"; js = "show()"; };
   };
 in
 runCommand "denbox-modules-check" { nativeBuildInputs = [ jq ]; } ''
@@ -41,9 +38,11 @@ runCommand "denbox-modules-check" { nativeBuildInputs = [ jq ]; } ''
   [[ $gate != ${services.editor} ]] && grep -q 'exec ${services.editor}$' "$gate" || fail "editor: not gated"
   [[ $(readlink "$services/denbox-api/run") == ${services.denbox-api} ]] || fail "denbox-api: wrong run link"
 
-  # denbox-api serves the bundle built from the part.
+  # denbox-api serves the bundle built from the part, next to the kit's panel.
   bundle=$(sed -n 's/^export DENBOX_BUNDLE=//p' ${services.denbox-api})
   [[ -n $bundle ]] || fail "denbox-api: no bundle"
-  jq -e --argjson expected ${lib.escapeShellArg expected} '. == $expected' "$bundle" || fail "bundle: unexpected content"
+  jq -e --argjson expected ${lib.escapeShellArg expected} \
+    '.version == 1 and .parts.greet == $expected and (.parts.panel.pages.panel | (.html | length > 0) and (.js | length > 0))' \
+    "$bundle" || fail "bundle: unexpected content"
   touch "$out"
 ''

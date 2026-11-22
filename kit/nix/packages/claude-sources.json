@@ -1,0 +1,13 @@
+{
+  "version": "2.1.330",
+  "platforms": {
+    "linux-x64": {
+      "binary": "claude.zst",
+      "checksum": "d53a3f9aab93c87bba0813d1101677677b457100824f5c3604fea9915ac5237a"
+    },
+    "linux-arm64": {
+      "binary": "claude.zst",
+      "checksum": "fd32a5b1552693c801e6f6cb3dc77e39c2438a873d00600558bae8bdc06b20bd"
+    }
+  }
+}

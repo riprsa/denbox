@@ -1,4 +1,5 @@
-# Runs the flake's checks: the Go tests and the Home Manager module check.
+# Runs the flake's checks: the package builds (Go tests included), the module
+# check and the box builds, the template's among them.
 name: ci
 
 on:

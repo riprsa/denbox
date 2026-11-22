@@ -1,0 +1,20 @@
+{
+  "version": "0.171.0",
+  "sources": {
+    "launcher": {
+      "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.171.0.tgz",
+      "hash": "sha512-1IOFzL2Xg86tLdw6kDo3GoKbkQENgQi7TI6rlEvN132R7ngSw7SNOIQoTcnKzSZZ8kf9N9GynCweSoaFbqk2Eg==",
+      "directory": "@openai/codex"
+    },
+    "x86_64-linux": {
+      "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.171.0-linux-x64.tgz",
+      "hash": "sha512-l66NZkQgdk2C3pbcfULDz42yEUB581MVA6I+Y43Wp4OIqEy73HCdmZ0GTjeAHY2ycuH4N00d9VsLrwT1jxshTw==",
+      "directory": "@openai/codex-linux-x64"
+    },
+    "aarch64-linux": {
+      "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.171.0-linux-arm64.tgz",
+      "hash": "sha512-9z17t4bbUJ9UCIb49O4PoA+ki+45q3rd8nZ8PeH6sYnlKkBld/Xpo/OS3h3Ti954+foshX4o7k5TCU8N7zzqQA==",
+      "directory": "@openai/codex-linux-arm64"
+    }
+  }
+}
