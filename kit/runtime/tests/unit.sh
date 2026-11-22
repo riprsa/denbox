@@ -185,6 +185,19 @@ commit two
 [[ $(count "$FAKE/activations") == 2 && $(cat "$DENBOX_STATE/revision") != "$old" ]] || fail 'new commit not applied'
 [[ ! -e $DENBOX_STATE/snapshots/$old ]] || fail 'old snapshot kept'
 
+echo '# the evaluation and the build add the kit cache; DENBOX_BINARY_CACHE=0 leaves it out'
+cache_pattern=' --extra-substituters https://denbox\.cachix\.org --extra-trusted-public-keys denbox\.cachix\.org-1:[A-Za-z0-9+/]+=* '
+for call in eval build; do
+  grep "^$call .*path:" "$FAKE/calls" | tail -1 | grep -E -- "$cache_pattern" > /dev/null || fail "$call without the cache"
+done
+echo three > "$repository/box/version"
+commit three
+DENBOX_BINARY_CACHE=0 "$denbox" sync --once
+for call in eval build; do
+  ! grep "^$call .*path:" "$FAKE/calls" | tail -1 | grep -q -- '--extra-substituters\|--extra-trusted-public-keys' ||
+    fail "$call with the cache switched off"
+done
+
 echo '# a failed build keeps the applied box'
 applied=$(readlink -f "$DENBOX_STATE/applied")
 revision=$(cat "$DENBOX_STATE/revision")

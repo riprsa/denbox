@@ -38,6 +38,11 @@ Today a box runs as a Docker container.
 
 T3 Code listens on `127.0.0.1:3773` of the host.
 
+The kit's own packages come prebuilt from the binary cache
+`https://denbox.cachix.org`; everything else comes from `cache.nixos.org` or
+its vendor. Set `DENBOX_BINARY_CACHE=0` in the box's environment to build them
+locally instead. See [Binary cache](docs/design.md#binary-cache).
+
 ## More
 
 - [docs/design.md](docs/design.md): the contracts between the parts, every

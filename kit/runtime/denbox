@@ -28,6 +28,14 @@ profile_runtime=${DENBOX_PROFILE_RUNTIME:-$HOME/.nix-profile/bin/denbox}
 # Store maintenance after an activation: generations kept, seconds between runs.
 gc_keep=${DENBOX_GC_KEEP:-3}
 gc_interval=${DENBOX_GC_INTERVAL:-86400}
+# The kit's binary cache (docs/design.md, Binary cache), added to whatever the
+# host configures, on every nix call that can build. DENBOX_BINARY_CACHE=0
+# leaves it out. An unreachable cache is a warning; Nix builds without it.
+cache_options=()
+if [[ ${DENBOX_BINARY_CACHE:-1} != 0 ]]; then
+  cache_options=(--extra-substituters https://denbox.cachix.org
+    --extra-trusted-public-keys denbox.cachix.org-1:0wTpaHGYAg3yirdzhxYjNPnzPjVjBiNoMHaK4Hptx9I=)
+fi
 
 self=$(readlink -f "${BASH_SOURCE[0]}")
 libexec=$(dirname "$self")
@@ -279,7 +287,7 @@ sync_once() {
   if [[ $revision == "${applied_revision:-}" && $box == "${applied_box:-}" && -f $state/follow ]]; then
     follow=$(< "$state/follow")
   else
-    follow=$(nix eval --no-write-lock-file --json "path:$snapshot#boxes.$box.follow")
+    follow=$(nix eval "${cache_options[@]}" --no-write-lock-file --json "path:$snapshot#boxes.$box.follow")
     jq -e 'type == "object" and all(to_entries[];
              (.key | test("^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$")) and (.value | type == "string" and length > 0))' \
       <<<"$follow" > /dev/null || { echo "boxes.$box.follow is not an attribute set of flake references" >&2; return 65; }
@@ -310,7 +318,7 @@ sync_once() {
   echo "Building boxes.$box at $revision"
   started=$SECONDS
   timeout --foreground --kill-after=10s "$deadline" \
-    nix build --no-write-lock-file --out-link "$state/candidate" "${overrides[@]}" "path:$snapshot#boxes.$box"
+    nix build "${cache_options[@]}" --no-write-lock-file --out-link "$state/candidate" "${overrides[@]}" "path:$snapshot#boxes.$box"
   candidate=$(readlink -f "$state/candidate")
   applied=$(readlink -f "$state/applied" 2>/dev/null || true)
 
