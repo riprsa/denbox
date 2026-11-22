@@ -227,7 +227,8 @@ git_fetch() {
 # back to the revision it saw last with a warning; that is a failure here.
 resolve() {
   local output result=0
-  output=$(nix flake prefetch --refresh --json "$1" 2>"$state/resolve.log") || result=$?
+  # Called in a loop over stdin; nix gets none of it.
+  output=$(nix flake prefetch --refresh --json "$1" < /dev/null 2>"$state/resolve.log") || result=$?
   cat "$state/resolve.log" >&2
   if ((result == 0)) && grep -q 'using cached version' "$state/resolve.log"; then result=69; fi
   ((result == 0)) || { echo "Could not resolve $1" >&2; return "$result"; }
