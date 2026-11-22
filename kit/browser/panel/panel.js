@@ -104,9 +104,7 @@ function showServices(services) {
         let toggle = null;
         if (service.optional) {
           toggle = el("button", { textContent: service.enabled ? "Turn off" : "Turn on", disabled: busy.has(service.name) });
-          // The design names the field `on`; the server reads `enabled`. Both are sent.
-          const on = !service.enabled;
-          toggle.addEventListener("click", () => act(service.name, "/services/toggle", { name: service.name, on, enabled: on }));
+          toggle.addEventListener("click", () => act(service.name, "/services/toggle", { name: service.name, on: !service.enabled }));
         }
         return row(
           service.name,
