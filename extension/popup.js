@@ -15,7 +15,7 @@ function entry(label, file) {
 
 async function show() {
   const stored = await chrome.storage.local.get(["denbox:address", "denbox:sources", "denbox:bundles", "denbox:status"]);
-  const entries = plan(stored["denbox:address"] ?? "", stored["denbox:sources"] ?? [], stored["denbox:bundles"] ?? {});
+  const entries = plan(stored["denbox:sources"] ?? [], stored["denbox:bundles"] ?? {});
   const pages = pagesOf(entries).map(({ part, page, html }) =>
     entry(titleOf(html) || `${part}/${page}`, `page.html#${encodeURIComponent(part)}/${encodeURIComponent(page)}`),
   );

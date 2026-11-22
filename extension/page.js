@@ -6,7 +6,7 @@ async function show() {
   const [part, page] = location.hash.slice(1).split("/").map(decodeURIComponent);
   const stored = await chrome.storage.local.get(["denbox:address", "denbox:sources", "denbox:bundles"]);
   const address = stored["denbox:address"] ?? "";
-  const entries = plan(address, stored["denbox:sources"] ?? [], stored["denbox:bundles"] ?? {});
+  const entries = plan(stored["denbox:sources"] ?? [], stored["denbox:bundles"] ?? {});
   const found = entries.find((entry) => entry.part && entry.name === part)?.part.pages?.[page];
   if (!found) {
     document.body.textContent = `No page ${part ?? ""}/${page ?? ""} in the running parts`;

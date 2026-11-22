@@ -5,8 +5,8 @@ const { loadBackground, backgroundSource } = require("./harness.cjs");
 const { parseBundle, sourceError } = require("../bundle.js");
 
 const ADDRESS = "https://box.example.com/api";
-const A = "https://git.example.com/a/bundle.json";
-const B = "https://git.example.org/b/bundle.json";
+const A = "https://raw.githubusercontent.com/example/a/main/bundle.json";
+const B = "https://gitlab.com/example/b/-/raw/main/bundle.json";
 const bundle = (parts) => JSON.stringify({ version: 1, parts });
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
@@ -46,13 +46,15 @@ test("parseBundle accepts version 1 and rejects other shapes", () => {
   }
 });
 
-test("a source must be https and off the box's host", () => {
-  assert.equal(sourceError(A, ADDRESS), undefined);
-  assert.match(sourceError("https://box.example.com:8443/b.json", ADDRESS), /box's host/, "every port of the box is the box");
-  assert.match(sourceError("http://git.example.com/b.json", ADDRESS), /https/);
-  assert.match(sourceError("https://box.example.com/files/b.json", ADDRESS), /box's host/);
-  assert.match(sourceError("https://box.example.com/b.json", "https://box.example.com"), /box's host/);
-  assert.match(sourceError("nope", ADDRESS), /not a URL/);
+test("a source must be https and on a Git host", () => {
+  assert.equal(sourceError(A), undefined);
+  assert.equal(sourceError(B), undefined);
+  assert.match(sourceError(A.replace("https:", "http:")), /https/);
+  // A box under any of its names, and a name that only looks like a Git host.
+  for (const url of ["https://box.example.com/b.json", "https://127.0.0.1:48099/b.json", "https://100.64.0.1/b.json", "https://gitlab.com.example.com/b.json", "https://raw.githubusercontent.com@box.example.com/b.json"]) {
+    assert.match(sourceError(url), /not on a Git host/, url);
+  }
+  assert.match(sourceError("nope"), /not a URL/);
 });
 
 test("a part that throws while starting is recorded and the others run", async () => {
@@ -112,7 +114,7 @@ test("a second part of the same name is reported and not started", async () => {
   assert.equal(state(store, B, "other").state, "running");
 });
 
-test("a stored source on the box's host is refused and its bundle dropped", async () => {
+test("a stored source off the Git hosts is refused and its bundle dropped", async () => {
   const onBox = "https://box.example.com/api/parts.json";
   const text = bundle({ evil: { background: "globalThis.ran = true;" } });
   const { store, ready, requests, context } = loadBackground({ storage: stored([onBox], { [onBox]: text }), respond: serve({ [onBox]: text }) });
@@ -123,7 +125,7 @@ test("a stored source on the box's host is refused and its bundle dropped", asyn
   assert.match(store["denbox:status"][onBox].error, /Refused/);
 });
 
-test("a redirect to the box's host is refused", async () => {
+test("a redirect off the Git hosts is refused", async () => {
   const { store, ready } = loadBackground({
     storage: stored([A]),
     respond: () => ({ body: bundle({ evil: {} }), url: `${ADDRESS}/parts.json` }),

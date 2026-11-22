@@ -45,11 +45,16 @@ function parseBundle(text) {
   return bundle;
 }
 
-// Why `url` cannot be a source, or undefined when it can. A source is https and
-// not on the box's host, whatever the port: the box supplies data, never code.
-// The loader and the options page both ask, so a source stored before a change
-// of the box address is refused too.
-function sourceError(url, address) {
+// The hosts a source may be on: the ones that serve a file of a Git branch.
+// A list of what is allowed, not of what is refused, because a box answers to
+// many names (loopback, a private address, its front door) and none of them is
+// one of these. To use another Git host, add it here.
+const SOURCE_HOSTS = ["raw.githubusercontent.com", "gitlab.com"];
+
+// Why `url` cannot be a source, or undefined when it can. The options page asks
+// before it saves, and the loader asks for every stored source and for where a
+// redirect landed.
+function sourceError(url) {
   let source;
   try {
     source = new URL(url);
@@ -57,14 +62,7 @@ function sourceError(url, address) {
     return "not a URL";
   }
   if (source.protocol !== "https:") return "must be https";
-  if (!address) return undefined;
-  let box;
-  try {
-    box = new URL(trimAddress(address));
-  } catch {
-    return "the box address is not a URL";
-  }
-  if (source.hostname === box.hostname) return "is on the box's host, and the box must not supply code";
+  if (!SOURCE_HOSTS.includes(source.hostname)) return `is not on a Git host (${SOURCE_HOSTS.join(", ")})`;
   return undefined;
 }
 
@@ -73,11 +71,11 @@ function sourceError(url, address) {
 // entry is { source, name, part } for a part that runs, or { source, name,
 // error } for one that does not: a duplicate name (the first one runs) or a
 // stored bundle that no longer parses (name null). Refused sources are left out.
-function plan(address, sources, bundles) {
+function plan(sources, bundles) {
   const entries = [];
   const owners = new Map();
   for (const { url } of sources) {
-    if (sourceError(url, address) || bundles[url] === undefined) continue;
+    if (sourceError(url) || bundles[url] === undefined) continue;
     let bundle;
     try {
       bundle = parseBundle(bundles[url]);

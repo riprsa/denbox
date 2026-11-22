@@ -46,9 +46,20 @@ every 5 minutes and on **Save and check**.
   `https://raw.githubusercontent.com/example/environment/main/browser/bundle.json`.
   A box, anything an agent can write to, or a branch agents can push to is not
   a source: the code would run in every signed-in session of the profile.
-- **Refused.** A source must be `https:` and must not be on the host of the
-  box address, on any port. The options page will not save such a source, and the loader
-  skips one that is already stored. A redirect is held to the same rules.
+- **Refused.** A source must be `https:` and on one of the Git hosts in
+  `SOURCE_HOSTS` (`bundle.js`): `raw.githubusercontent.com` and `gitlab.com`.
+  The options page will not save any other URL, and the loader skips one that
+  is already stored. A redirect is held to the same rules. The list names what
+  is allowed, because a box answers to many names and none of them is a Git
+  host. To use another Git host, add it to the list. The host is not the whole
+  rule: these hosts serve every repository and every branch, so the first
+  point still decides whether a URL is safe.
+- **URL forms.** GitHub:
+  `https://raw.githubusercontent.com/OWNER/REPO/BRANCH/PATH`, with a token for
+  a private repository. GitLab with the profile's login:
+  `https://gitlab.com/GROUP/REPO/-/raw/BRANCH/PATH`. GitLab with a token:
+  `https://gitlab.com/api/v4/projects/GROUP%2FREPO/repository/files/PATH/raw?ref=BRANCH`,
+  with `/` in `PATH` written as `%2F`; the first form does not take a token.
 - **Login.** Without a token the request carries the profile's cookies for the
   source's host, so a file behind the profile's login works. With a token it
   carries `authorization: Bearer <token>` and no cookies. A token goes only to
