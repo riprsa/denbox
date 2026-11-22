@@ -1,0 +1,22 @@
+{
+  "manifest_version": 2,
+  "name": "Denbox",
+  "description": "Runs the browser parts of a denbox box.",
+  "version": "1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnHNtHXl8oNXtV/4RCLucV8fFXU5KzArm3JHd6c561ieiXTgWgPRaLPcytStJn6KvJ9U/j5Yhh2z9voY5AtcfQxqfrkCPPHgqvMrLyirgFHR9clsBk6+sB+HrLbD1A7YKt82UCeTFUultN+zdzCyTiH8shZrMHJ3wWj8evuoJSJMI1JC7cSiO1v7YjnLGWWrvn6LWLoo0avAcfFneMJ77Nn9AyP258n65rVW39Wn64BOsOO09MWaOYdsM2ED0xc9OmM3AIVZ95xcXYlmYCE1mJsSKG9vQhhmL47zmV6fb58fJRO3fl03sybhWBTCbrns5LSFdGrdrI8u6XeSQjpJ5zwIDAQAB",
+  "permissions": [
+    "tabs", "tabCapture", "nativeMessaging", "alarms", "storage", "unlimitedStorage",
+    "bookmarks", "clipboardWrite", "cookies", "contextMenus", "notifications", "webNavigation",
+    "webRequest", "webRequestBlocking", "<all_urls>"
+  ],
+  "background": { "scripts": ["bundle.js", "loader.js"], "persistent": true },
+  "commands": {
+    "shortcut-1": { "description": "Shortcut 1" },
+    "shortcut-2": { "description": "Shortcut 2" },
+    "shortcut-3": { "description": "Shortcut 3" },
+    "shortcut-4": { "description": "Shortcut 4" }
+  },
+  "browser_action": { "default_title": "Denbox", "default_popup": "popup.html" },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "content_security_policy": "script-src 'self' 'unsafe-eval'; object-src 'self'"
+}
