@@ -218,7 +218,7 @@ git_fetch() {
 # sync_once: one pass of the four steps of the design's Sync section. Any
 # failure exits before the applied state changes.
 sync_once() {
-  local cache repository ref box deadline revision snapshot follow fingerprint candidate applied started remaining
+  local cache repository ref box deadline revision snapshot follow entry fingerprint candidate applied started remaining
   local overrides=() refresh=()
   cache=$(read_bootstrap)
   repository=$(jq -r .repository "$cache")

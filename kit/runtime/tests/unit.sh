@@ -210,8 +210,8 @@ wait_for '"$denbox" service status worker 2>/dev/null | grep "^worker: up " > /d
 "$denbox" service status | grep '^denbox-sync: up ' > /dev/null || fail "sync loop not supervised: $("$denbox" service status; cat "$tmp/supervise.log")"
 wait_for '"$denbox" service logs worker -n 5 | grep worker-stderr-marker > /dev/null'
 (( (0$(stat -c %a "$DENBOX_STATE/logs/worker") & 077) == 0 )) || fail "log directory is readable by others"
-# The format denbox-api parses.
-"$denbox" service status worker | grep -E '^worker: up \(pid [0-9]+\) [0-9]+ seconds' > /dev/null || fail 'status format'
+# The format denbox-api parses (newer s6 adds the pgid after the pid).
+"$denbox" service status worker | grep -E '^worker: up .*[0-9]+ seconds' > /dev/null || fail 'status format'
 
 echo '# an unchanged service is not restarted; a changed one is; a removed one stops'
 "$denbox" service stop denbox-sync
