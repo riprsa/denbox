@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Pin the latest Claude Code release, Codex (npm latest) and T3 Code nightly.
+
+Rewrites the *-sources.json files next to this script and nothing else.
+Run it from anywhere; commit the result.
+"""
+import base64
+import json
+from pathlib import Path
+import re
+import urllib.request
+
+HERE = Path(__file__).resolve().parent
+# The kit's systems, as Nix names them and as the upstream archives do.
+SYSTEMS = [("x86_64-linux", "linux-x64"), ("aarch64-linux", "linux-arm64")]
+
+
+def fetch(url):
+    with urllib.request.urlopen(url, timeout=60) as response:
+        return response.read()
+
+
+def npm_metadata(name):
+    return json.loads(fetch("https://registry.npmjs.org/" + name))
+
+
+def npm_source(package, directory):
+    dist = package["dist"]
+    if not dist["tarball"].startswith("https://registry.npmjs.org/"):
+        raise ValueError("Unexpected package registry")
+    if not dist["integrity"].startswith("sha512-"):
+        raise ValueError("Expected npm SHA-512 integrity")
+    return {"url": dist["tarball"], "hash": dist["integrity"], "directory": directory}
+
+
+def claude_sources():
+    """The release manifest in the shape nixpkgs' claude-code takes as `manifest`."""
+    base = "https://downloads.claude.ai/claude-code-releases"
+    version = fetch(base + "/latest").decode().strip()
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ValueError("Unexpected Claude Code release version")
+    upstream = json.loads(fetch(f"{base}/{version}/manifest.zst.json"))
+    if upstream["version"] != version:
+        raise ValueError("Claude Code manifest version mismatch")
+    platforms = {}
+    for _, platform in SYSTEMS:
+        entry = upstream["platforms"][platform]
+        if not re.fullmatch(r"[0-9a-f]{64}", entry["checksum"]):
+            raise ValueError(f"Invalid Claude Code checksum for {platform}")
+        platforms[platform] = {"binary": entry["binary"], "checksum": entry["checksum"]}
+    return {"version": version, "platforms": platforms}
+
+
+def codex_sources():
+    """The npm launcher and its per-platform packages."""
+    registry = npm_metadata("@openai/codex")
+    version = registry["dist-tags"]["latest"]
+    sources = {"launcher": npm_source(registry["versions"][version], "@openai/codex")}
+    for system, suffix in SYSTEMS:
+        sources[system] = npm_source(registry["versions"][f"{version}-{suffix}"], "@openai/codex-" + suffix)
+    return {"version": version, "sources": sources}
+
+
+def t3_sources():
+    """T3's per-platform GitHub Release archives, as the `t3` npm launcher resolves them."""
+    version = npm_metadata("t3")["dist-tags"]["nightly"]
+    if "-nightly." not in version:
+        raise ValueError("The T3 nightly tag did not resolve to a nightly version")
+    base = f"https://github.com/pingdotgg/t3code/releases/download/v{version}/"
+    sums = {}
+    for line in fetch(base + "SHA256SUMS").decode().splitlines():
+        digest, _, name = line.strip().partition("  ")
+        sums[name.lstrip("*")] = digest
+    sources = {}
+    for system, suffix in SYSTEMS:
+        archive = f"t3-{version}-{suffix}.tar.gz"
+        digest = bytes.fromhex(sums[archive])
+        if len(digest) != 32:
+            raise ValueError(f"Invalid SHA-256 for {archive}")
+        sources[system] = {"url": base + archive, "hash": "sha256-" + base64.b64encode(digest).decode()}
+    return {"channel": "nightly", "version": version, "sources": sources}
+
+
+def main():
+    # Resolve everything before writing anything.
+    manifests = {"claude-sources.json": claude_sources(), "codex-sources.json": codex_sources(),
+                 "t3-sources.json": t3_sources()}
+    for name, value in manifests.items():
+        temporary = HERE / (name + ".tmp")
+        temporary.write_text(json.dumps(value, indent=2) + "\n")
+        temporary.replace(HERE / name)
+    print("Pinned Claude Code {}, Codex {}, T3 nightly {}".format(
+        *(manifests[name]["version"] for name in manifests)))
+
+
+if __name__ == "__main__":
+    main()

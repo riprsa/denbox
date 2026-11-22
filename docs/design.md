@@ -56,9 +56,11 @@ on top of the kit's modules:
 - `<box>.follow` is the value of `denbox.follow` (see Sync).
 - `<box>.config` is the evaluated configuration, for checks and debugging.
 
-`mkBoxes` defaults the user to `root` with home `/root`; `home.username` and
-`home.homeDirectory` override it. The kit pins nixpkgs and Home Manager; an
-environment may make them follow its own.
+`mkBoxes` defaults the user to `root` with home `/root` and
+`home.stateVersion` to `26.05`; the box's module overrides any of them. It
+allows the one unfree package the kit ships, Claude Code, and no other. The
+kit pins nixpkgs and Home Manager; an environment may make them follow its
+own.
 
 ## Options
 
@@ -84,6 +86,10 @@ Every option lives under `denbox.`. Nothing is on unless the table says so.
 | `denbox.agents.mcpServers` | `{ }` | MCP servers registered with every enabled agent |
 | `denbox.secrets.provider` | passthrough | see Secrets |
 | `denbox.follow` | `{ }` | flake input name to flake reference (see Sync) |
+
+An MCP server is `{ command, args, env }` or `{ url, headers }`. Claude gets
+them merged into `~/.claude.json` on activation; Codex gets them as `-c`
+overrides on its command line, so `~/.codex/config.toml` stays Codex's own.
 
 An agent that needs a proxy, a wrapper or another build overrides its
 `.package`. The kit knows nothing about a particular proxy, vault or cluster.

@@ -5,5 +5,10 @@
     ./services.nix
     ./api.nix
     ./browser.nix
+    ./secrets.nix
+    ./follow.nix
+    ./tools.nix
+    ./t3.nix
+    ./agents.nix
   ];
 }
