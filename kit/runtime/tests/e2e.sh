@@ -74,6 +74,10 @@ box denbox service status | grep '^denbox-sync: up ' > /dev/null || fail 'sync l
 [[ $(box getent passwd root | cut -d: -f7) == /usr/local/libexec/denbox/login ]] || fail 'login shell'
 [[ $(box sh -c 'ls /usr/local/bin') == $'denbox\nnix' ]] || fail "commands of the image on PATH: $(box sh -c 'ls /usr/local/bin' | tr '\n' ' ')"
 
+echo '# the seed runtime brings ssh, for Git inputs fetched before the first activation'
+box bash -c 'tools=$(sed -n "s/^tools=//p" "$(readlink -f /nix/var/nix/gcroots/denbox-seed/libexec/denbox/denbox)")
+  PATH=$tools command -v ssh' > /dev/null || fail 'no ssh on the seed runtime PATH'
+
 echo '# a second supervisor is refused and the first keeps its services'
 result=0
 box timeout 20 denbox supervise 2>/dev/null || result=$?
