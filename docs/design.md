@@ -91,7 +91,7 @@ Every option lives under `denbox.`. Nothing is on unless the table says so.
 | `denbox.agents.codex.enable`, `.package` | `false`, kit's pin | Codex |
 | `denbox.agents.codex.config` | `{ }` | Codex configuration, passed as one `-c` override per leaf value |
 | `denbox.secrets.provider` | passthrough | see Secrets |
-| `denbox.follow` | `{ }` | flake input name to flake reference (see Sync) |
+| `denbox.follow` | `{ }` | flake input name to a flake reference that names its host, not a registry name (see Sync) |
 
 The kit installs an agent, starts it through the secrets provider and merges
 configuration into the files the agent owns. It does not model an agent's
