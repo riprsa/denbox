@@ -46,6 +46,14 @@ The kit's own packages come prebuilt from the binary cache
 its vendor. Set `DENBOX_BINARY_CACHE=0` in the box's environment to build them
 locally instead. See [Binary cache](docs/design.md#binary-cache).
 
+## Approving a change
+
+By default a box applies every new commit of its environment on its own. With
+`denbox.apply = "approve"` it builds the commit and waits: `denbox pending`
+shows the revision and what changes in the box, `denbox apply` activates it.
+The revision that turns this off waits for approval too. See
+[Sync](docs/design.md#sync).
+
 ## What a box asks of its host
 
 Ports, limits, the size of `/tmp` and `/dev/shm`, devices, capabilities,

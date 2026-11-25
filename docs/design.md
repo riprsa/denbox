@@ -94,6 +94,7 @@ Every option lives under `denbox.`. Nothing is on unless the table says so.
 | `denbox.agents.codex.config` | `{ }` | Codex configuration, passed as one `-c` override per leaf value |
 | `denbox.secrets.provider` | passthrough | see Secrets |
 | `denbox.follow` | `{ }` | flake input name to a flake reference that names its host, not a registry name (see Sync) |
+| `denbox.apply` | `auto` | `approve`: a sync builds and waits for `denbox apply` instead of activating (see Sync) |
 | `denbox.name` | the box's attribute name | set by `mkBoxes`; the box's name wherever one is needed |
 | `denbox.tailscale.enable` | `false` | make the box a node of a tailnet (see Tailscale) |
 | `denbox.tailscale.hostname` | `denbox.name` | the node's name in the tailnet |
@@ -135,7 +136,9 @@ The kit knows nothing about a particular proxy, vault or cluster.
 | --- | --- |
 | `~/.config/denbox/services/NAME/run` | a supervised service, optionally with `finish` |
 | `~/.config/denbox/shell` | the executable `denbox shell` runs, written by the tools module; bash without it |
+| `~/.config/denbox/apply` | holds `approve` in a box whose `denbox.apply` asks for approval, absent otherwise; the runtime reads it from the applied box in the store, not from here |
 | `~/.local/state/denbox/` | runtime state: fetched sources, the applied revision, `status` |
+| `~/.local/state/denbox/pending.json` | the box that waits for approval (see Sync); absent when none does |
 | `~/.local/state/denbox/optional-services/NAME` | marker of a switched-on optional service |
 | `~/.local/state/denbox/logs/NAME/current` | a service's log, 10 x 1 MB |
 | `/run/denbox/` | s6 scan directory (`services/`) and locks; gone on restart, and may be `noexec`. `/run/denbox-USER/` for a box whose user is not root |
@@ -147,7 +150,9 @@ The kit knows nothing about a particular proxy, vault or cluster.
 One command, `denbox`, replaces the set of commands the predecessor had:
 
     denbox supervise                      s6 over the services and the sync loop, under tini or systemd; refused while one runs
-    denbox sync [--once]                  fetch, build, activate, reconcile services
+    denbox sync [--once]                  fetch, build, activate or leave pending, reconcile services
+    denbox pending                        print the box that waits for approval, as JSON; nothing when none does
+    denbox apply [REVISION]               activate the pending box; with REVISION, only that one
     denbox host                           print boxes.<box>.host of the bootstrap's environment, followed as a sync does; builds nothing
     denbox service status [NAME]
     denbox service start|stop|restart NAME
@@ -201,6 +206,41 @@ a public one. 1Password is not part of the bootstrap.
 
 A failed fetch, build or activation keeps the box as it was. A box restarts
 from its last applied state without network.
+
+With `denbox.apply = "approve"` step 4 waits for a person. The sync builds as
+before, activates nothing, and records the result in `pending.json`:
+
+```json
+{
+  "revision": "9f2c...", "box": "personal", "subject": "Add ripgrep",
+  "built": "2026-11-25T08:00:00Z", "store": "/nix/store/...-home-manager-generation",
+  "applied": "41ab...", "apply": "approve",
+  "changes": ["ripgrep: ∅ → 14.1.1, +5.9 MiB"],
+  "follow": {}, "resolved": {}
+}
+```
+
+`applied` is the revision the box runs, `changes` is what
+`nix store diff-closures` says of the two boxes, and `apply` is the mode the
+box would have once applied, so whoever approves sees a revision that
+switches approval off. `denbox apply` activates the pending box and
+reconciles; `denbox apply REVISION` refuses any other revision, so that an
+approval never applies a commit that arrived after it was given. A newer
+commit replaces the pending one, a branch that returns to the applied
+revision leaves nothing pending, and a pending box is not built twice.
+
+The mode in force is the one of the box that runs, read from the applied box
+in the store. A revision that turns approval off therefore waits for approval
+itself, and one that turns it on is applied at once. Two cases never wait: a
+box's first build, which the person who installed it just asked for, and a
+revision that builds the box already applied.
+
+Approval decides when a change takes effect, and for a box without agents
+whether it does. It is no gate against an agent inside the box: an agent that
+runs as the box's user can run `denbox apply`, or change the home without the
+environment. The build runs before the approval, and with it the revision's
+Nix code; on a machine that is inside Nix's sandbox, in a container it is not
+(see Hosts).
 
 Steps 3 and 4 are skipped while nothing changed: the revision of the
 environment is the one applied and every followed reference still resolves to
