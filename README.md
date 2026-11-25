@@ -98,7 +98,8 @@ of another user is a second installation, with another `--name`.
 
 On a Steam Deck, install multi-user Nix first with an installer that supports
 SteamOS, and give the box `home.username = "deck"` and
-`home.homeDirectory = "/home/deck"`.
+`home.homeDirectory = "/home/deck"`. This is written from what SteamOS's
+packages say about its filesystem; it has not been run on a Steam Deck yet.
 
 ## A box in a tailnet
 
