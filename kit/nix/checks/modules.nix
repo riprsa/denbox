@@ -1,5 +1,5 @@
 # Builds a minimal box with one service and one optional service, and checks
-# the files the modules produce.
+# the files the modules produce. A second box asks for approval.
 { pkgs, home-manager, module, runCommand, writeShellScript }:
 let
   box = home-manager.lib.homeManagerConfiguration {
@@ -17,6 +17,7 @@ let
     ];
   };
   inherit (box.config.denbox) services;
+  approving = box.extendModules { modules = [{ denbox.apply = "approve"; }]; };
 in
 runCommand "denbox-modules-check" { } ''
   services=${box.activationPackage}/home-files/.config/denbox/services
@@ -27,5 +28,8 @@ runCommand "denbox-modules-check" { } ''
   gate=$(readlink "$services/editor/run")
   [[ $gate != ${services.editor} ]] && grep -q 'exec ${services.editor}$' "$gate" || fail "editor: not gated"
   [[ $(readlink "$services/denbox-api/run") == ${services.denbox-api} ]] || fail "denbox-api: wrong run link"
+  # The mode the runtime reads from a built box.
+  [[ $(cat ${box.activationPackage}/home-files/.config/denbox/apply) == auto ]] || fail "apply: not auto by default"
+  [[ $(cat ${approving.activationPackage}/home-files/.config/denbox/apply) == approve ]] || fail "apply: not approve"
   touch "$out"
 ''

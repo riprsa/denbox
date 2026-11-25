@@ -47,13 +47,15 @@ mkdir -p "$HOME" "$FAKE/bin" "$FAKE/store"
 # overrides, and fails when the snapshot has a file named fail. flake
 # prefetch resolves a reference by $FAKE/revisions.json; a revision
 # "cached:REV" is Nix's fallback to a revision seen before. eval --expr pins
-# the resolved references as REF?rev=REV.
+# the resolved references as REF?rev=REV. store diff-closures prints one
+# line with colour codes.
 cat > "$FAKE/bin/nix" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE/calls"
 case "$1 ${2:-}" in
   'store gc') exit 0 ;;
+  'store diff-closures') printf '\033[1mtool\033[0m: 1.0 \342\206\222 2.0\n'; exit 0 ;;
 esac
 installable=${*: -1}
 case $1 in
@@ -230,6 +232,81 @@ echo '{"version": 2}' > "$DENBOX_BOOTSTRAP"
 "$denbox" sync --once 2>"$tmp/err"
 grep -q 'not valid' "$tmp/err" || fail 'no warning'
 write_bootstrap "file://$repository"
+
+echo '# a box that asks for approval is applied without it the first time, since the mode in force is the applied one'
+mkdir -p "$repository/box/home-files/.config/denbox"
+echo approve > "$repository/box/home-files/.config/denbox/apply"
+commit 'ask for approval'
+activations=$(count "$FAKE/activations")
+"$denbox" sync --once
+[[ $(count "$FAKE/activations") == $((activations + 1)) && -z $("$denbox" pending) ]] || fail 'the switch to approval waited'
+
+echo '# then a new commit is built and left pending, and the box stays as it was'
+applied=$(readlink -f "$DENBOX_STATE/applied") revision=$(cat "$DENBOX_STATE/revision")
+echo four > "$repository/box/version"
+commit four
+four=$(git -C "$repository" rev-parse HEAD)
+"$denbox" sync --once
+[[ $(count "$FAKE/activations") == $((activations + 1)) && $(readlink -f "$DENBOX_STATE/applied") == "$applied" &&
+   $(cat "$DENBOX_STATE/revision") == "$revision" ]] || fail 'a pending box was applied'
+grep -q " pending $four\$" "$DENBOX_STATE/status" || fail "status: $(cat "$DENBOX_STATE/status")"
+"$denbox" pending | jq -e --arg revision "$four" --arg applied "$revision" '
+  .revision == $revision and .applied == $applied and .box == "test" and .subject == "four" and
+  .apply == "approve" and .changes == ["tool: 1.0 → 2.0"] and (.store | endswith("-box"))' > /dev/null ||
+  fail "pending: $("$denbox" pending)"
+
+echo '# a pending box is not built again, and its follow is not evaluated again'
+before=$(builds) evaluated=$(evaluations)
+"$denbox" sync --once
+[[ $(builds) == "$before" && $(evaluations) == "$evaluated" ]] || fail 'a pending box was built or evaluated again'
+
+echo '# apply refuses another revision than the pending one'
+result=0
+"$denbox" apply "$revision" 2>"$tmp/err" || result=$?
+[[ $result == 65 ]] && grep -q "$four waits for approval" "$tmp/err" || fail "apply of another revision: $result $(cat "$tmp/err")"
+[[ $(count "$FAKE/activations") == $((activations + 1)) ]] || fail 'a refused apply activated'
+
+echo '# a newer commit replaces the pending one, and apply activates it'
+echo five > "$repository/box/version"
+commit five
+five=$(git -C "$repository" rev-parse HEAD)
+"$denbox" sync --once
+[[ $("$denbox" pending | jq -r .revision) == "$five" ]] || fail 'the newer commit is not the pending one'
+# As under a running sync loop, which holds its own lock between passes.
+flock "$DENBOX_RUN/sync.lock" "$denbox" apply "$five"
+[[ $(count "$FAKE/activations") == $((activations + 2)) && $(cat "$DENBOX_STATE/revision") == "$five" &&
+   -z $("$denbox" pending) && ! -e $DENBOX_STATE/candidate ]] || fail 'apply did not activate the pending box'
+grep -q " applied $five\$" "$DENBOX_STATE/status" || fail "status after apply: $(cat "$DENBOX_STATE/status")"
+[[ ! -e $DENBOX_STATE/snapshots/$four ]] || fail 'old snapshot kept after apply'
+before=$(builds)
+"$denbox" sync --once
+[[ $(builds) == "$before" && $(count "$FAKE/activations") == $((activations + 2)) ]] || fail 'an applied box was built again'
+
+echo '# apply with nothing pending does nothing; with a revision it fails'
+"$denbox" apply 2>"$tmp/err"
+grep -q 'Nothing waits' "$tmp/err" || fail 'no message'
+if "$denbox" apply "$five" 2>/dev/null; then fail 'apply of a revision with nothing pending succeeded'; fi
+
+echo '# a branch that goes back to the applied revision leaves nothing pending'
+echo six > "$repository/box/version"
+commit six
+"$denbox" sync --once
+[[ -n $("$denbox" pending) ]] || fail 'six is not pending'
+git -C "$repository" reset -q --hard "$five"
+"$denbox" sync --once
+[[ -z $("$denbox" pending) && ! -e $DENBOX_STATE/candidate ]] || fail 'a withdrawn revision is still pending'
+
+echo '# a revision that switches approval off waits for approval itself; the next one does not'
+git -C "$repository" rm -rq box/home-files
+commit 'approval off'
+"$denbox" sync --once
+[[ $("$denbox" pending | jq -r .apply) == auto ]] || fail "the switch back was not left pending: $("$denbox" pending)"
+"$denbox" apply
+activations=$(count "$FAKE/activations")
+echo seven > "$repository/box/version"
+commit seven
+"$denbox" sync --once
+[[ $(count "$FAKE/activations") == $((activations + 1)) && -z $("$denbox" pending) ]] || fail 'auto again did not apply'
 
 echo '# followed references are resolved first and built pinned; unchanged revisions skip the build'
 echo '{"denbox": "github:example/denbox", "denbox/nixpkgs": "github:example/nixpkgs"}' > "$repository/follow.json"

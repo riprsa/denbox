@@ -7,6 +7,7 @@
     ./api.nix
     ./secrets.nix
     ./follow.nix
+    ./apply.nix
     ./host.nix
     ./tools.nix
     ./t3.nix

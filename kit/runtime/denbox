@@ -2,7 +2,9 @@
 # The runtime of a box. See docs/design.md, "Layout in a box" and "Sync".
 #
 #   denbox supervise                       s6 over the services and the sync loop, under tini or systemd
-#   denbox sync [--once]                   fetch, build, activate, reconcile services
+#   denbox sync [--once]                   fetch, build, activate or leave pending, reconcile services
+#   denbox pending                         print the box that waits for approval, as JSON
+#   denbox apply [REVISION]                activate the pending box; with REVISION, only that one
 #   denbox host                            print what the box asks of its host, as JSON
 #   denbox service status [NAME]
 #   denbox service start|stop|restart NAME
@@ -49,7 +51,7 @@ sync_service=denbox-sync
 name_pattern='^[a-z][a-z0-9-]*$'
 
 usage() {
-  sed -n '3,10s/^# //p' "$self" >&2
+  sed -n '3,12s/^# //p' "$self" >&2
   exit 64
 }
 
@@ -299,6 +301,8 @@ fetch_box() {
   read -r applied_revision applied_box _ 2>/dev/null < "$state/fingerprint" || true
   if [[ $revision == "${applied_revision:-}" && $box == "${applied_box:-}" && -f $state/follow ]]; then
     follow=$(< "$state/follow")
+  elif [[ "$revision $box" == "$(jq -r '"\(.revision) \(.box)"' "$state/pending.json" 2>/dev/null)" ]]; then
+    follow=$(jq -cS .follow "$state/pending.json")
   else
     follow=$(nix eval "${cache_options[@]}" --no-write-lock-file --json "path:$snapshot#boxes.$box.follow")
     jq -e 'type == "object" and all(to_entries[];
@@ -323,8 +327,76 @@ fetch_box() {
   fi
 }
 
+# apply_mode BOX: the denbox.apply of a built box, as the apply module wrote
+# it into the box's home files. A box built before the option existed is auto.
+apply_mode() {
+  if [[ $(cat "$1/home-files/.config/denbox/apply" 2>/dev/null) == approve ]]; then echo approve; else echo auto; fi
+}
+
+# pending_fingerprint: the fingerprint of the box that waits for approval.
+# Prints nothing when none waits, or when the build the record names is not
+# the candidate any more.
+pending_fingerprint() {
+  [[ -s $state/pending.json ]] || return 0
+  [[ $(readlink -f "$state/candidate" 2>/dev/null) == "$(jq -r .store "$state/pending.json")" ]] || return 0
+  printf '%s %s %s\n' "$(jq -r .revision "$state/pending.json")" "$(jq -r .box "$state/pending.json")" \
+    "$(jq -cS .resolved "$state/pending.json")"
+}
+
+# write_pending SUBJECT: records the candidate as waiting for approval, from
+# the caller's revision, box, follow and resolved. `apply` is the mode the box
+# would have once applied, and `changes` what `nix store diff-closures` says
+# of the applied box and this one, as lines; it is left empty when Nix cannot
+# say.
+write_pending() {
+  local candidate applied changes record
+  candidate=$(readlink -f "$state/candidate")
+  applied=$(readlink -f "$state/applied")
+  changes=$(nix store diff-closures "$applied" "$candidate" 2>/dev/null |
+    jq -Rn '[inputs | gsub("\u001b\\[[0-9;]*m"; "") | select(length > 0)]') || changes='[]'
+  record=$(mktemp "$state/.pending.XXXXXX")
+  jq -n --arg revision "$revision" --arg box "$box" --arg subject "$1" --arg store "$candidate" \
+    --arg applied "$(cat "$state/revision" 2>/dev/null || true)" --arg apply "$(apply_mode "$candidate")" \
+    --arg built "$(date -u +%FT%TZ)" --argjson follow "$follow" --argjson resolved "$resolved" \
+    --argjson changes "${changes:-[]}" '{
+      revision: $revision, box: $box, subject: $subject, built: $built, store: $store,
+      applied: (if $applied == "" then null else $applied end),
+      apply: $apply, changes: $changes, follow: $follow, resolved: $resolved
+    }' > "$record"
+  mv -f "$record" "$state/pending.json"
+}
+
+# activate_candidate TIMEOUT: step 4 of the design's Sync section, for
+# sync_once and apply. Activates the candidate unless it is the applied box
+# already, records the caller's revision, follow and fingerprint as applied,
+# and reconciles the services.
+activate_candidate() {
+  local candidate applied old
+  candidate=$(readlink -f "$state/candidate")
+  applied=$(readlink -f "$state/applied" 2>/dev/null || true)
+  if [[ $candidate != "$applied" ]]; then
+    echo "Activating $candidate"
+    timeout --foreground --kill-after=10s "$1" "$candidate/activate"
+    # A GC root for the applied box, under its own name.
+    nix build --out-link "$state/applied" "$candidate"
+  fi
+  rm -f "$state/candidate" "$state/pending.json"
+  printf '%s\n' "$follow" > "$state/follow"
+  printf '%s\n' "$fingerprint" > "$state/fingerprint"
+  printf '%s\n' "$revision" > "$state/revision"
+  reconcile
+
+  # Old snapshots are in the store already, as the source of their builds.
+  for old in "$state"/snapshots/*; do
+    [[ ${old##*/} == "$revision" ]] || rm -rf -- "$old"
+  done
+  maintain_store || echo 'Store maintenance failed; it is retried after the next activation' >&2
+}
+
 # sync_once: one pass of the four steps of the design's Sync section. Any
-# failure exits before the applied state changes.
+# failure exits before the applied state changes. A box whose applied
+# environment sets denbox.apply to approve stops after the build and leaves
+# the result pending, for `denbox apply`.
 sync_once() {
   local cache box deadline revision snapshot follow resolved
   local fingerprint candidate applied started remaining
@@ -335,6 +407,12 @@ sync_once() {
   fetch_box "$cache"
   fingerprint="$revision $box $resolved"
   if [[ -e $state/applied && $fingerprint == "$(cat "$state/fingerprint" 2>/dev/null)" ]]; then
+    # The branch is back at what the box runs: nothing waits any more.
+    rm -f "$state/candidate" "$state/pending.json"
+    reconcile
+    return 0
+  fi
+  if [[ $fingerprint == "$(pending_fingerprint)" ]]; then
     reconcile
     return 0
   fi
@@ -348,27 +426,56 @@ sync_once() {
   candidate=$(readlink -f "$state/candidate")
   applied=$(readlink -f "$state/applied" 2>/dev/null || true)
 
-  # 4. Activate, then reconcile the services.
-  if [[ $candidate != "$applied" ]]; then
-    remaining=$((deadline - (SECONDS - started)))
-    ((remaining > 0)) || remaining=1
-    echo "Activating $candidate"
-    timeout --foreground --kill-after=10s "$remaining" "$candidate/activate"
-    # A GC root for the applied box, under its own name.
-    nix build --out-link "$state/applied" "$candidate"
+  # The mode in force is the applied box's own, so a revision that switches
+  # approval off waits for approval itself. A first build, and a revision
+  # that builds the box already applied, have nothing to ask about.
+  if [[ -n $applied && $candidate != "$applied" && $(apply_mode "$applied") == approve ]]; then
+    write_pending "$(git --git-dir="$state/source.git" log -1 --format=%s "$revision")"
+    echo "boxes.$box at $revision waits for approval: denbox apply $revision"
+    reconcile
+    return 0
   fi
-  rm -f "$state/candidate"
-  printf '%s\n' "$follow" > "$state/follow"
-  printf '%s\n' "$fingerprint" > "$state/fingerprint"
-  printf '%s\n' "$revision" > "$state/revision"
-  reconcile
 
-  # Old snapshots are in the store already, as the source of their builds.
-  local old
-  for old in "$state"/snapshots/*; do
-    [[ $old == "$snapshot" ]] || rm -rf -- "$old"
-  done
-  maintain_store || echo 'Store maintenance failed; it is retried after the next activation' >&2
+  # 4. Activate, then reconcile the services.
+  remaining=$((deadline - (SECONDS - started)))
+  ((remaining > 0)) || remaining=1
+  activate_candidate "$remaining"
+}
+
+# apply_pending [REVISION]: activates the box that waits for approval. With
+# REVISION it refuses any other, so an approval of one revision never applies
+# the next one that arrived meanwhile.
+apply_pending() {
+  local wanted=${1:-} revision follow fingerprint deadline=1800
+  fingerprint=$(pending_fingerprint)
+  if [[ -z $fingerprint ]]; then
+    echo 'Nothing waits for approval' >&2
+    [[ -z $wanted ]] || exit 65
+    return 0
+  fi
+  revision=$(jq -r .revision "$state/pending.json")
+  [[ -z $wanted || $wanted == "$revision" ]] ||
+    { echo "$revision waits for approval, not $wanted" >&2; exit 65; }
+  follow=$(jq -cS .follow "$state/pending.json")
+  [[ ! -s $state/bootstrap.json ]] || deadline=$(jq -r '.apply_timeout // 1800' "$state/bootstrap.json")
+  activate_candidate "$deadline"
+  printf '%s applied %s\n' "$(date -u +%FT%TZ)" "$revision" > "$state/status"
+}
+
+# apply [REVISION]: `denbox apply`. It waits for a running sync pass to end.
+apply() {
+  (($# <= 1)) || usage
+  mkdir -p "$state" "$run"
+  exec 9>"$run/state.lock"
+  flock 9
+  # What the activation starts must not hold the lock after it.
+  (apply_pending "$@") 9>&-
+}
+
+# pending: `denbox pending`. Prints the record of the box that waits for
+# approval, nothing when none waits.
+pending() {
+  [[ -z $(pending_fingerprint) ]] || cat "$state/pending.json"
 }
 
 # host: prints boxes.<box>.host of the bootstrap's environment, fetched and
@@ -405,8 +512,10 @@ maintain_store() {
 }
 
 # sync_loop [--once]: the reconciler. Only one runs at a time; a failure keeps the
-# box as it was. The loop exits when an activation changed the runtime, so s6
-# starts the new one.
+# box as it was. The loop exits when the runtime in the profile is not the
+# one it started with, after a pass or a `denbox apply` between two, so s6
+# starts the new one. A pass and `denbox apply` exclude each other by the
+# state lock.
 sync_loop() {
   local once=false result runtime interval
   case ${1:-} in
@@ -417,21 +526,26 @@ sync_loop() {
   mkdir -p "$state" "$run"
   exec 8>"$run/sync.lock"
   flock -n 8 || { echo 'A sync is already running' >&2; exit 75; }
+  exec 9>"$run/state.lock"
   trap 'trap "" TERM INT; kill -TERM -- -$$ 2>/dev/null || true; wait; exit 0' TERM INT
+  runtime=$(readlink -f "$profile_runtime" 2>/dev/null || true)
   while :; do
+    flock 9
     printf '%s syncing\n' "$(date -u +%FT%TZ)" > "$state/status"
-    runtime=$(readlink -f "$profile_runtime" 2>/dev/null || true)
     set +e
-    # Descendants must not hold the lock after the pass.
-    (set -e; sync_once) 8>&- &
+    # Descendants must not hold the locks after the pass.
+    (set -e; sync_once) 8>&- 9>&- &
     wait "$!"
     result=$?
     set -e
-    if ((result == 0)); then
-      printf '%s applied %s\n' "$(date -u +%FT%TZ)" "$(cat "$state/revision" 2>/dev/null)" > "$state/status"
-    else
+    if ((result != 0)); then
       printf '%s failed exit=%s; the box stays as it was\n' "$(date -u +%FT%TZ)" "$result" | tee "$state/status" >&2
+    elif [[ -n $(pending_fingerprint) ]]; then
+      printf '%s pending %s\n' "$(date -u +%FT%TZ)" "$(jq -r .revision "$state/pending.json")" > "$state/status"
+    else
+      printf '%s applied %s\n' "$(date -u +%FT%TZ)" "$(cat "$state/revision" 2>/dev/null)" > "$state/status"
     fi
+    flock -u 9
     [[ $once == false ]] || exit "$result"
     if [[ $(readlink -f "$profile_runtime" 2>/dev/null || true) != "$runtime" ]]; then
       echo 'The runtime changed; s6 starts the new one'
@@ -477,6 +591,8 @@ command=${1:-}
 case $command in
   supervise) [[ $# == 0 ]] || usage; supervise ;;
   sync) sync_loop "$@" ;;
+  pending) [[ $# == 0 ]] || usage; pending ;;
+  apply) apply "$@" ;;
   host) [[ $# == 0 ]] || usage; host ;;
   service) service "$@" ;;
   shell) shell "$@" ;;

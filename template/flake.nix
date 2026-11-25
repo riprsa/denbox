@@ -64,6 +64,9 @@
         # waiting for this flake's lock to move.
         # denbox.follow.denbox = "github:riprsa/denbox";
 
+        # Build a new commit and wait for `denbox apply` instead of activating it.
+        # denbox.apply = "approve";
+
         # Anything else Home Manager can do.
         home.packages = [ pkgs.htop ];
       };
