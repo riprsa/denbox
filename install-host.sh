@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Installs a box on a Debian or Ubuntu machine with systemd, without a
-# container, or updates one installed before. Run it as root.
+# Installs a box on a Linux machine with systemd, without a container, or
+# updates one installed before. Run it as root.
 #
 #   bash install-host.sh [--repository URL] [--ref REF] [--box BOX] [--name NAME]
 #                        [--token-file FILE] [--seed FLAKEREF]
@@ -17,8 +17,15 @@
 # The box names its user: the installer reads home.username and
 # home.homeDirectory of the box, creates that user when it is missing, and
 # runs the box as that user. Run again with the same name, it updates the
-# unit and the seed with the settings it saved and restarts the box. It never
-# deletes or rewrites a home.
+# unit and the seed with the settings it saved and restarts the box; an
+# option given then replaces the saved one, so --box switches the
+# installation to another box of the environment that names the same user.
+# It never deletes or rewrites a home.
+#
+# It writes the box's files to /var/lib/denbox and its unit to
+# /etc/systemd/system, and nothing under /usr, so that they survive an image
+# update of a system whose /usr is read-only and whose /etc keeps little
+# else, such as SteamOS.
 set -euo pipefail
 umask 077
 
@@ -29,7 +36,6 @@ nix_version=2.34.1
 # The seed runs only until the box's first activation installs the runtime
 # that the box's own lock names, so the latest one is good enough to start.
 seed_default=github:riprsa/denbox
-nix=/nix/var/nix/profiles/default/bin/nix
 nix_conf=/etc/nix/nix.conf
 seed_link=/nix/var/nix/gcroots/denbox-seed
 
@@ -120,13 +126,13 @@ load_saved() {
 }
 
 name=${name:-$box}
-[[ -z $name || ! -f $root/etc/denbox/$name/settings ]] || load_saved "$root/etc/denbox/$name/settings"
+[[ -z $name || ! -f $root/var/lib/denbox/$name/settings ]] || load_saved "$root/var/lib/denbox/$name/settings"
 ask repository 'Environment repository URL'
 ask ref 'Branch' main
 ask box 'Box name'
 name=${name:-$box}
 seed=${seed:-$seed_default}
-etc=/etc/denbox/$name
+dir=/var/lib/denbox/$name
 unit=denbox-$name.service
 
 [[ $repository =~ ^[A-Za-z0-9+.:/@_~%-]+$ ]] || fail "Not a repository URL: $repository"
@@ -141,17 +147,31 @@ flakeref='^[A-Za-z0-9+.:/@_~%?=&-]+$'
   fail "Not a sync interval from 30 to 86400 seconds: $interval"
 [[ -d $root/run/systemd/system ]] || fail 'systemd is not running on this machine'
 
-# Fetching Nix and the environment needs curl, xz and git; a stock Debian
-# or Ubuntu may lack some of them.
+# Nix where its release installer puts it, or where the machine's package
+# or another installer put it on root's PATH; empty when there is none.
+nix=$root/nix/var/nix/profiles/default/bin/nix
+[[ -x $nix ]] || nix=$(command -v nix) || nix=''
+
+# Fetching the environment needs git; fetching Nix needs curl and xz. apt
+# and pacman install what is missing; elsewhere the person running this does.
+needed=(git)
+[[ -n $nix ]] || needed+=(curl xz)
 missing=()
-for package in curl:curl xz:xz-utils git:git; do
-  command -v "${package%%:*}" > /dev/null || missing+=("${package#*:}")
+for command in "${needed[@]}"; do
+  command -v "$command" > /dev/null || missing+=("$command")
 done
 if ((${#missing[@]})); then
-  command -v apt-get > /dev/null || fail "Install ${missing[*]} first; this installer knows only apt"
-  echo "Installing ${missing[*]}"
-  DEBIAN_FRONTEND=noninteractive apt-get update -q
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends ca-certificates "${missing[@]}"
+  if command -v apt-get > /dev/null; then
+    echo "Installing ${missing[*]}"
+    DEBIAN_FRONTEND=noninteractive apt-get update -q
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends ca-certificates \
+      "${missing[@]/#xz/xz-utils}"
+  elif command -v pacman > /dev/null; then
+    echo "Installing ${missing[*]}"
+    pacman -S --needed --noconfirm "${missing[@]}"
+  else
+    fail "Install ${missing[*]} first; this installer knows only apt and pacman"
+  fi
 fi
 
 # install_nix: multi-user Nix with its daemon, the pinned release. The daemon
@@ -160,6 +180,10 @@ fi
 # needs (no sandbox = false, no single owner of /nix).
 install_nix() {
   local system checksum
+  # The release installer creates /nix. A read-only root, as on SteamOS,
+  # needs an installer that mounts /nix from elsewhere.
+  [[ -w $root/nix || (! -e $root/nix && -w $root/) ]] ||
+    fail 'Cannot write /nix; install multi-user Nix with its daemon first, then run this again'
   case $(uname -m) in
     x86_64) system=x86_64-linux; checksum=92fc64a0740353215dec590508b9008cc8bd8e7c3d2b387a65da28146a78442f ;;
     aarch64) system=aarch64-linux; checksum=81aed0600605ee0494d2cd82c441b1ff6ecad7d3efcc6d4505a70aefc67b865c ;;
@@ -173,13 +197,14 @@ install_nix() {
   # Nix's files are for every user, not under this script's umask.
   (umask 022 && "$temporary/nix-$nix_version-$system/install" --daemon --yes --no-channel-add \
     --nix-extra-conf-file "$temporary/nix.conf" < /dev/null)
+  nix=$root/nix/var/nix/profiles/default/bin/nix
 }
-if [[ ! -x $root$nix ]]; then
+if [[ -z $nix ]]; then
   install_nix
 else
   # The box's user builds through the daemon; a single-user Nix has none.
   systemctl is-active --quiet nix-daemon.socket nix-daemon.service ||
-    fail 'Nix is installed without its daemon; this installer needs multi-user Nix'
+    fail "$nix runs without its daemon; this installer needs multi-user Nix (systemctl enable --now nix-daemon.socket)"
 fi
 # The runtime asks Nix for the kit's binary cache. Through the daemon Nix
 # takes a substituter and its key from a user only when the daemon trusts
@@ -210,7 +235,7 @@ export NIX_CONFIG='extra-experimental-features = nix-command flakes'
 # The seed: the first runtime the box runs, rooted so store maintenance keeps
 # it. The box's own runtime takes over after its first activation.
 echo "Building the runtime from $seed"
-"$root$nix" build --out-link "$root$seed_link" "$seed#runtime"
+"$nix" build --out-link "$root$seed_link" "$seed#runtime"
 askpass=$root$seed_link/libexec/denbox/askpass
 
 # remote GIT-ARGS: Git without the user's or the system's configuration,
@@ -224,7 +249,7 @@ remote() {
 # the file is empty), 2 when the branch is missing, other codes otherwise.
 readable() { remote ls-remote --exit-code "$repository" "refs/heads/$ref" > /dev/null; }
 if [[ $token_given == false ]]; then
-  if [[ -f $root$etc/git_token ]]; then cp "$root$etc/git_token" "$token"; else : > "$token"; fi
+  if [[ -f $root$dir/git_token ]]; then cp "$root$dir/git_token" "$token"; else : > "$token"; fi
   status=0
   readable 2> /dev/null || status=$?
   if ((status == 2)); then fail "$repository has no branch $ref"; fi
@@ -244,16 +269,23 @@ remote --git-dir="$temporary/source.git" fetch -q --depth=1 "$repository" "refs/
 mkdir "$temporary/snapshot"
 git --git-dir="$temporary/source.git" archive FETCH_HEAD | tar -x -C "$temporary/snapshot"
 # shellcheck disable=SC2016 # a Nix expression, not a shell one
-home_config=$("$root$nix" eval --raw --no-write-lock-file "path:$temporary/snapshot#boxes.$box.config.home" \
+home_config=$("$nix" eval --raw --no-write-lock-file "path:$temporary/snapshot#boxes.$box.config.home" \
   --apply 'home: "${home.username} ${home.homeDirectory}"')
 read -r user home <<<"$home_config"
 [[ $user =~ ^[a-z_][a-z0-9_-]*$ ]] || fail "boxes.$box sets home.username to $user, not a user name"
 [[ $home =~ ^/[A-Za-z0-9._/-]*$ ]] || fail "boxes.$box sets home.homeDirectory to $home, not a path"
 
-# One box per user: two would share one home and its state.
+# One box per user: two would share one home and its state. An
+# installation switches only to a box of its user, whose home it is.
 for other in "$root"/etc/systemd/system/denbox-*.service; do
-  [[ -f $other && ${other##*/} != "$unit" ]] || continue
-  ! grep -qx "User=$user" "$other" || fail "The user $user runs the box of ${other##*/} already"
+  [[ -f $other ]] || continue
+  if [[ ${other##*/} == "$unit" ]]; then
+    installed=$(sed -n 's/^User=//p' "$other")
+    [[ -z $installed || $installed == "$user" ]] ||
+      fail "$unit runs as $installed and boxes.$box as $user; install it with another --name"
+  else
+    ! grep -qx "User=$user" "$other" || fail "The user $user runs the box of ${other##*/} already"
+  fi
 done
 
 if ! getent passwd "$user" > /dev/null; then
@@ -266,10 +298,10 @@ IFS=: read -r _ _ _ gid _ passwd_home _ <<<"$(getent passwd "$user")"
   fail "The home of $user is $passwd_home; boxes.$box says $home. Set home.homeDirectory to it"
 group=$(getent group "$gid" | cut -d: -f1)
 # The bootstrap and the token are readable by the user's primary group, so
-# that group must be the user's alone.
+# that group must be the user's alone; it may list the user itself.
 if [[ $user != root ]]; then
   IFS=: read -r _ _ _ members <<<"$(getent group "$gid")"
-  [[ -z $members && $(getent passwd | awk -F: -v gid="$gid" '$4 == gid' | wc -l) == 1 ]] ||
+  [[ (-z $members || $members == "$user") && $(getent passwd | awk -F: -v gid="$gid" '$4 == gid' | wc -l) == 1 ]] ||
     fail "The primary group $group of $user is shared; give $user a group of its own"
 fi
 if [[ ! -d $root$home ]]; then
@@ -279,38 +311,30 @@ if [[ ! -d $root$home ]]; then
 fi
 
 # The bootstrap and the token: root writes them, the box's user reads them.
-# /etc/denbox lets every box's user through to its own directory.
-install -d -m 0755 "$root/etc/denbox"
-install -d "$root$etc"
+# /var/lib/denbox lets every box's user through to its own directory.
+install -d -m 0755 "$root/var/lib/denbox"
+install -d "$root$dir"
 printf '{"version": 2, "repository": "%s", "ref": "%s", "box": "%s"%s}\n' "$repository" "$ref" "$box" \
   "${interval:+, \"sync_interval\": $interval}" > "$temporary/bootstrap.json"
 printf '%s=%s\n' DENBOX_REPOSITORY "$repository" DENBOX_REF "$ref" DENBOX_BOX "$box" DENBOX_SEED "$seed" \
   > "$temporary/settings"
 [[ -z $interval ]] || printf 'DENBOX_SYNC_INTERVAL=%s\n' "$interval" >> "$temporary/settings"
-mv -f "$temporary/bootstrap.json" "$temporary/settings" "$root$etc/"
-mv -f "$token" "$root$etc/git_token"
-chown "root:$group" "$root$etc" "$root$etc/bootstrap.json" "$root$etc/git_token"
-chmod 0750 "$root$etc"
-chmod 0640 "$root$etc/bootstrap.json" "$root$etc/git_token"
-chmod 0600 "$root$etc/settings"
-
-# denbox on PATH, as in the image: the box's own runtime once its activation
-# installed it, the seed before.
-install -d -m 0755 "$root/usr/local/bin"
-cat > "$temporary/denbox" <<EOF
-#!/bin/sh
-# denbox on PATH: the box's own runtime once its activation installed it,
-# the seed before. Written by install-host.sh.
-profile=\${HOME:-/root}/.nix-profile/bin/denbox
-if [ -x "\$profile" ]; then exec "\$profile" "\$@"; fi
-exec $seed_link/bin/denbox "\$@"
-EOF
-chmod 0755 "$temporary/denbox"
-mv -f "$temporary/denbox" "$root/usr/local/bin/denbox"
+mv -f "$temporary/bootstrap.json" "$temporary/settings" "$root$dir/"
+mv -f "$token" "$root$dir/git_token"
+chown "root:$group" "$root$dir" "$root$dir/bootstrap.json" "$root$dir/git_token"
+chmod 0750 "$root$dir"
+chmod 0640 "$root$dir/bootstrap.json" "$root$dir/git_token"
+chmod 0600 "$root$dir/settings"
 
 # The unit. systemd makes the runtime's directory, empty at every start.
 # The runtime finds the same directory by its user when no variable says so.
+# The unit runs the first denbox on its PATH: the box's own runtime in
+# ~/.nix-profile/bin once the box's activation installed it, the seed
+# before. A login shell finds the box's own there too, put on PATH by Nix's
+# profile script; until the first activation the seed is
+# /nix/var/nix/gcroots/denbox-seed/bin/denbox.
 if [[ $user == root ]]; then run=denbox; else run=denbox-$user; fi
+nix_bin=${nix%/*}
 cat > "$temporary/unit" <<EOF
 # The denbox box $name, written by install-host.sh; run it again to update.
 [Unit]
@@ -324,12 +348,12 @@ Group=$group
 WorkingDirectory=~
 RuntimeDirectory=$run
 RuntimeDirectoryMode=0700
-Environment=PATH=$home/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=$home/.nix-profile/bin:$seed_link/bin:${nix_bin#"$root"}:/usr/local/bin:/usr/bin:/bin
 Environment="NIX_CONFIG=extra-experimental-features = nix-command flakes"
 Environment=DENBOX_RUN=/run/$run
-Environment=DENBOX_BOOTSTRAP=$etc/bootstrap.json
-Environment=DENBOX_GIT_TOKEN=$etc/git_token
-ExecStart=/usr/local/bin/denbox supervise
+Environment=DENBOX_BOOTSTRAP=$dir/bootstrap.json
+Environment=DENBOX_GIT_TOKEN=$dir/git_token
+ExecStart=/usr/bin/env denbox supervise
 # s6-svscan stops the services on TERM; each has 30 seconds.
 KillMode=mixed
 TimeoutStopSec=90
@@ -350,7 +374,7 @@ systemctl restart "$unit"
 cat <<EOF
 
 The box $name is starting as $user; its first build takes a while.
-Settings: $etc (run install-host.sh --name $name again to update)
+Settings: $dir (run install-host.sh --name $name again to update)
 Logs:  journalctl -u $unit -f
 Shell: su - $user -c 'denbox shell'
 EOF

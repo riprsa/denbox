@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016 # scripts in single quotes run later, as the box's user
-# End-to-end test of install-host.sh on a machine with systemd: installs Nix,
-# creates the user boxuser and runs the box of tests/host-fixture as that
-# user, the environment served by git daemon on the loopback and the kit
-# from this checkout. It changes the machine for good, so it runs only on a
+# End-to-end test of install-host.sh on a machine with systemd: installs Nix
+# unless the machine has it, creates the user boxuser and runs the box of
+# tests/host-fixture as that user, the environment served by git daemon on
+# the loopback and the kit from this checkout. It changes the machine for good, so it runs only on a
 # throwaway one, such as a CI runner, with passwordless sudo.
 #
 #   DENBOX_TEST_MACHINE=throwaway kit/runtime/tests/host.sh
@@ -69,7 +69,7 @@ echo '# install-host.sh installs Nix and the box for the user the box names'
 sudo env DENBOX_SEED="path:$srv/seed" DENBOX_SYNC_INTERVAL=30 \
   bash "$root/install-host.sh" --repository "$repository" --box test < /dev/null
 getent passwd "$user" > /dev/null || fail "no user $user"
-[[ $(sudo stat -c '%U:%G %a' /etc/denbox/test/git_token) == "root:$user 640" ]] || fail 'token file permissions'
+[[ $(sudo stat -c '%U:%G %a' /var/lib/denbox/test/git_token) == "root:$user 640" ]] || fail 'token file permissions'
 
 echo '# the unit is active and the first sync applies the box'
 systemctl is-active --quiet "$unit" || fail 'unit not active'

@@ -528,7 +528,7 @@ A box needs Linux, Nix and something that runs `denbox supervise` at start.
 - **Baked image**, for short-lived boxes: the same image with one box already
   built into its store, made by the environment's CI. It starts without a
   build and without volumes.
-- **A machine**: a Debian or Ubuntu machine with systemd, a VPS for
+- **A machine**: a Linux machine with systemd, a VPS or a Steam Deck for
   example, without a container. See below.
 - **Incus**, later.
 
@@ -592,7 +592,11 @@ machine: its agents can do whatever that user can.
    as the image. Multi-user Nix lets a box that is not root build, root and
    collect the store through the daemon, with the sandbox on, and needs
    none of the container's settings (`sandbox = false`, no build users). A
-   Nix without its daemon is refused. It adds
+   Nix that is there already, at `/nix/var/nix/profiles/default/bin/nix` or
+   on root's `PATH` (a distribution's package, another installer), is used
+   as it is when its daemon runs; one without its daemon is refused. On a
+   read-only root, where the release installer cannot create `/nix`, it
+   stops and asks for Nix to be installed first. It adds
    `extra-trusted-substituters` and `extra-trusted-public-keys` for the
    kit's binary cache to the daemon's `nix.conf`, so that the daemon takes
    them from the box's user; no other user gets the cache;
@@ -601,29 +605,56 @@ machine: its agents can do whatever that user can.
    `/nix/var/nix/gcroots/denbox-seed`. The seed runs only until the first
    activation installs the runtime the box's own lock names;
 3. reads `boxes.<box>.config.home.username` and `.homeDirectory` and creates
-   that user with that home when it is missing. The box says who it runs as;
-   one user runs one box;
-4. writes the bootstrap and the token, the unit `denbox-NAME.service` and the
-   launcher `/usr/local/bin/denbox`, and restarts the unit.
+   that user with that home when it is missing. An existing user is used
+   when its home is that one and its primary group is its own. The box says
+   who it runs as; one user runs one box;
+4. writes the bootstrap, the token and the unit `denbox-NAME.service`, and
+   restarts the unit.
+
+It needs git, and curl and xz to install Nix; apt and pacman install them
+when they are missing, and on other systems they are installed first.
 
 Run again with the same name, it rewrites these files with the settings it
 saved, rebuilds the seed and restarts the box. It never creates, changes or
-deletes anything in the home.
+deletes anything in the home. An option given on that run replaces the saved
+setting, so `--name NAME --box OTHER` switches the installation to another
+box of the environment (`--repository` and `--ref` to another environment or
+branch); the next sync builds and activates it in the same home, as it would
+a new revision. The other box must name the installation's user: a box is
+that user's home, so one of another user is installed with another name, and
+the installer refuses the switch.
 
 | Path | Holds |
 | --- | --- |
-| `/etc/denbox/NAME/bootstrap.json`, `git_token` | the bootstrap, `root:GROUP` `0640` in a `0750` directory: root and the box's user read them, only root writes them |
-| `/etc/denbox/NAME/settings` | what the installer reuses when run again, root only |
+| `/var/lib/denbox/NAME/bootstrap.json`, `git_token` | the bootstrap, `root:GROUP` `0640` in a `0750` directory: root and the box's user read them, only root writes them |
+| `/var/lib/denbox/NAME/settings` | what the installer reuses when run again, root only |
 | `/etc/systemd/system/denbox-NAME.service` | runs `denbox supervise` as the user, restarts it always |
-| `/usr/local/bin/denbox` | the image's launcher: the user's profile copy, the seed before it |
+| `/etc/nix/nix.conf` | the two lines that trust the kit's binary cache |
+| `/nix/var/nix/gcroots/denbox-seed` | the seed runtime |
 | `/run/denbox-USER/` (`/run/denbox/` for root) | the unit's `RuntimeDirectory`, empty at every start |
 
 The unit sets `DENBOX_BOOTSTRAP`, `DENBOX_GIT_TOKEN` and `DENBOX_RUN`, and a
-`PATH` with the user's profile and Nix first. The runtime finds the same run
+`PATH` of the user's profile, the seed and Nix, and runs the first `denbox`
+on it: the box's own once its first activation installed it, the seed
+before, as the image does. There is no launcher. In the user's login shell
+Nix's own profile script puts `~/.nix-profile/bin` on `PATH`, so `denbox`
+there is the box's own from the first activation on; before it, the seed is
+`/nix/var/nix/gcroots/denbox-seed/bin/denbox`. The runtime finds the same run
 directory by its user, so `denbox service ...` and `denbox shell` work in the
 user's login shell. A `denbox sync --once` there needs the unit's two
 bootstrap variables. The service logs go to the journal as well:
 `journalctl -u denbox-NAME`.
+
+Nothing goes under `/usr`, and nothing in `/etc` but the unit, the user and
+the cache lines, so that an installation survives an image update of a
+system with a read-only `/usr` and an `/etc` that an update resets.
+SteamOS is one: an update replaces `/usr` and discards changes in `/etc`
+except a keep list, which holds units in `/etc/systemd/system` and the
+user and group files; `/var`, `/home` and `/nix`, mounted from `/home`,
+survive. There an update keeps the box, its unit, its user and the seed. It
+drops the cache lines in `nix.conf` unless the Nix installer keeps
+`/etc/nix`: the box then builds the kit's packages instead of fetching
+them, until the installer runs again.
 
 ## Repository
 

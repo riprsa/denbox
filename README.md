@@ -74,7 +74,8 @@ See [docs/design.md](docs/design.md), What a box asks of its host.
 
 ## On a machine, without a container
 
-On a Debian or Ubuntu machine with systemd, as root, run
+On a Linux machine with systemd (Debian, Ubuntu, Arch Linux, SteamOS), as
+root, run
 
 ```sh
 bash install-host.sh
@@ -82,12 +83,22 @@ bash install-host.sh
 
 It asks the same questions as `install.sh`, installs Nix with its daemon when
 it is missing, and runs the box as the user the box names in
-`home.username` and `home.homeDirectory`, creating that user when needed. The
-box becomes the unit `denbox-<box>.service`: `journalctl -u denbox-<box> -f`
-for its logs, `su - <user> -c 'denbox shell'` for its shell. Run it again
-with `--name <box>` to update. The box manages that user's home and services;
-it does not manage the machine (kernel, firewall, system packages) and is not
+`home.username` and `home.homeDirectory`, creating that user when needed. A
+Nix already installed with its daemon is used as it is. The box becomes the
+unit `denbox-<box>.service`: `journalctl -u denbox-<box> -f` for its logs,
+`su - <user> -c 'denbox shell'` for its shell. Run it again with
+`--name <box>` to update. The box manages that user's home and services; it
+does not manage the machine (kernel, firewall, system packages) and is not
 isolated from it.
+
+To run another box of the same environment on the machine, run it again
+with the box: `--name <box> --box <other>`; `--repository` and `--ref` change
+the environment the same way. The other box must name the same user; a box
+of another user is a second installation, with another `--name`.
+
+On a Steam Deck, install multi-user Nix first with an installer that supports
+SteamOS, and give the box `home.username = "deck"` and
+`home.homeDirectory = "/home/deck"`.
 
 ## A box in a tailnet
 
