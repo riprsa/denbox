@@ -263,7 +263,8 @@ before=$(builds) evaluated=$(evaluations)
 echo '# apply refuses another revision than the pending one'
 result=0
 "$denbox" apply "$revision" 2>"$tmp/err" || result=$?
-[[ $result == 65 ]] && grep -q "$four waits for approval" "$tmp/err" || fail "apply of another revision: $result $(cat "$tmp/err")"
+[[ $result == 65 ]] || fail "apply of another revision exited $result"
+grep -q "$four waits for approval" "$tmp/err" || fail "apply of another revision: $(cat "$tmp/err")"
 [[ $(count "$FAKE/activations") == $((activations + 1)) ]] || fail 'a refused apply activated'
 
 echo '# a newer commit replaces the pending one, and apply activates it'

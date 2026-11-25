@@ -136,7 +136,7 @@ The kit knows nothing about a particular proxy, vault or cluster.
 | --- | --- |
 | `~/.config/denbox/services/NAME/run` | a supervised service, optionally with `finish` |
 | `~/.config/denbox/shell` | the executable `denbox shell` runs, written by the tools module; bash without it |
-| `~/.config/denbox/apply` | `auto` or `approve`, the box's `denbox.apply`; the runtime reads it from the applied box in the store, not from here |
+| `~/.config/denbox/apply` | holds `approve` in a box whose `denbox.apply` asks for approval, absent otherwise; the runtime reads it from the applied box in the store, not from here |
 | `~/.local/state/denbox/` | runtime state: fetched sources, the applied revision, `status` |
 | `~/.local/state/denbox/pending.json` | the box that waits for approval (see Sync); absent when none does |
 | `~/.local/state/denbox/optional-services/NAME` | marker of a switched-on optional service |

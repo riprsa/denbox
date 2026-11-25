@@ -327,8 +327,8 @@ fetch_box() {
   fi
 }
 
-# apply_mode BOX: the denbox.apply of a built box, as the apply module wrote
-# it into the box's home files. A box built before the option existed is auto.
+# apply_mode BOX: the denbox.apply of a built box. The apply module writes
+# the file into the home files of a box that asks for approval, and no other.
 apply_mode() {
   if [[ $(cat "$1/home-files/.config/denbox/apply" 2>/dev/null) == approve ]]; then echo approve; else echo auto; fi
 }

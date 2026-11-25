@@ -1,7 +1,8 @@
 # Who decides when a built environment reaches the box (docs/design.md,
 # Sync). The runtime reads the mode from the applied box's own home files, so
 # the mode in force is the one of the environment that runs, and a revision
-# that changes it is applied by the mode it replaces.
+# that changes it is applied by the mode it replaces. A box that applies on
+# its own writes no file: no file means auto.
 { config, lib, ... }:
 {
   options.denbox.apply = lib.mkOption {
@@ -13,5 +14,5 @@
     '';
   };
 
-  config.home.file.".config/denbox/apply".text = config.denbox.apply;
+  config.home.file.".config/denbox/apply" = lib.mkIf (config.denbox.apply == "approve") { text = "approve"; };
 }

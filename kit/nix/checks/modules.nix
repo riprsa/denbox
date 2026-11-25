@@ -29,7 +29,7 @@ runCommand "denbox-modules-check" { } ''
   [[ $gate != ${services.editor} ]] && grep -q 'exec ${services.editor}$' "$gate" || fail "editor: not gated"
   [[ $(readlink "$services/denbox-api/run") == ${services.denbox-api} ]] || fail "denbox-api: wrong run link"
   # The mode the runtime reads from a built box.
-  [[ $(cat ${box.activationPackage}/home-files/.config/denbox/apply) == auto ]] || fail "apply: not auto by default"
+  [[ ! -e ${box.activationPackage}/home-files/.config/denbox/apply ]] || fail "apply: a file without approval"
   [[ $(cat ${approving.activationPackage}/home-files/.config/denbox/apply) == approve ]] || fail "apply: not approve"
   touch "$out"
 ''
