@@ -207,6 +207,11 @@ a public one. 1Password is not part of the bootstrap.
 A failed fetch, build or activation keeps the box as it was. A box restarts
 from its last applied state without network.
 
+Before a build the runtime removes `/homeless-shelter`, the home Nix gives a
+build. In a container Nix has no sandbox, so a build that writes to its home
+creates that directory for real, and Nix refuses every later build while it
+exists.
+
 With `denbox.apply = "approve"` step 4 waits for a person. The sync builds as
 before, activates nothing, and records the result in `pending.json`:
 
