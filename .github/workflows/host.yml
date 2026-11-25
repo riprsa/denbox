@@ -1,5 +1,7 @@
 # Tests install-host.sh: with fakes of the machine, then for real on the
-# runner, an Ubuntu machine with systemd that is thrown away after the job.
+# runner, an Ubuntu machine with systemd that is thrown away after the job,
+# and in an Arch Linux container with systemd as its first process and Nix
+# from Arch's own package.
 name: host
 
 on:
@@ -30,3 +32,26 @@ jobs:
       - run: kit/runtime/tests/host.sh
         env:
           DENBOX_TEST_MACHINE: throwaway
+
+  # The same test on a machine that is not Debian, whose Nix is not where
+  # Nix's release installer puts it and is not installed by install-host.sh.
+  machine-arch:
+    needs: installer
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Start Arch Linux with systemd
+        run: >
+          docker run -d --name arch --privileged -e container=docker
+          --tmpfs /run --tmpfs /tmp -v "$PWD:/src"
+          archlinux:base@sha256:375a401bb3c6376b37f40b6dfa25067db37ec78d0b7af67ae6315f43a0184a9d
+          /usr/lib/systemd/systemd
+      - name: Install Nix and sudo from Arch, and the runner's user
+        run: |
+          docker exec arch systemctl is-system-running --wait || true
+          docker exec arch pacman -Syu --noconfirm --needed nix sudo git
+          docker exec arch systemctl enable --now nix-daemon.socket
+          docker exec arch useradd --create-home --uid "$(id -u)" runner
+          docker exec arch sh -c 'echo "runner ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/runner'
+      - run: docker exec -u runner -e DENBOX_TEST_MACHINE=throwaway arch /src/kit/runtime/tests/host.sh
