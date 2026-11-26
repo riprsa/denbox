@@ -34,6 +34,10 @@ profile_runtime=${DENBOX_PROFILE_RUNTIME:-$HOME/.nix-profile/bin/denbox}
 # Store maintenance after an activation: generations kept, seconds between runs.
 gc_keep=${DENBOX_GC_KEEP:-3}
 gc_interval=${DENBOX_GC_INTERVAL:-86400}
+# The home Nix gives a build. Without a sandbox, as in a container, a build
+# that writes to its home creates this directory, and Nix then refuses every
+# build until it is gone.
+shelter=${DENBOX_SHELTER:-/homeless-shelter}
 # The kit's binary cache (docs/design.md, Binary cache), added to whatever the
 # host configures, on every nix call that can build. DENBOX_BINARY_CACHE=0
 # leaves it out. An unreachable cache is a warning; Nix builds without it.
@@ -421,6 +425,9 @@ sync_once() {
   # fingerprint names. They are pinned, so the build needs no --refresh.
   echo "Building boxes.$box at $revision"
   started=$SECONDS
+  # Where the box's user may not remove it, Nix builds in a sandbox and the
+  # directory does not matter.
+  rm -rf -- "$shelter" 2>/dev/null || true
   timeout --foreground --kill-after=10s "$deadline" \
     nix build "${cache_options[@]}" --no-write-lock-file --out-link "$state/candidate" "${overrides[@]}" "path:$snapshot#boxes.$box"
   candidate=$(readlink -f "$state/candidate")

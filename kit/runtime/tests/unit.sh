@@ -36,7 +36,7 @@ trap 'echo "$0: failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 export HOME=$tmp/home USER=test
 export DENBOX_STATE=$tmp/state DENBOX_RUN=$tmp/run DENBOX_CONFIG=$HOME/.config/denbox
 export DENBOX_BOOTSTRAP=$tmp/bootstrap.json DENBOX_GIT_TOKEN=$tmp/token
-export DENBOX_PROFILE_RUNTIME=$tmp/profile-denbox DENBOX_GC_INTERVAL=0
+export DENBOX_PROFILE_RUNTIME=$tmp/profile-denbox DENBOX_GC_INTERVAL=0 DENBOX_SHELTER=$tmp/shelter
 export FAKE=$tmp/fake
 unset XDG_STATE_HOME
 mkdir -p "$HOME" "$FAKE/bin" "$FAKE/store"
@@ -44,7 +44,8 @@ mkdir -p "$HOME" "$FAKE/bin" "$FAKE/store"
 # The fake nix: eval prints the snapshot's follow.json, or for .host the
 # snapshot's host.json with the arguments it was called with, build copies the
 # snapshot's box/ into a store path named after the snapshot and the
-# overrides, and fails when the snapshot has a file named fail. flake
+# overrides, and fails when the snapshot has a file named fail or, as Nix
+# without a sandbox does, when the home it gives builds exists. flake
 # prefetch resolves a reference by $FAKE/revisions.json; a revision
 # "cached:REV" is Nix's fallback to a revision seen before. eval --expr pins
 # the resolved references as REF?rev=REV. store diff-closures prints one
@@ -85,6 +86,7 @@ case $1 in
     if [[ $installable == /* ]]; then ln -sfn "$installable" "$link"; exit 0; fi
     snapshot=${installable#path:}; snapshot=${snapshot%%#*}
     [[ ! -e $snapshot/fail ]] || { echo 'build failed' >&2; exit 1; }
+    [[ ! -e $DENBOX_SHELTER ]] || { echo "error: home directory \"$DENBOX_SHELTER\" exists" >&2; exit 1; }
     # Names and contents, like a store path's hash.
     hash=$( (cd "$snapshot" && find . -type f | sort && find . -type f | sort | xargs cat; echo "$overrides") | sha256sum | cut -c1-16)
     out=$FAKE/store/$hash-box
@@ -188,6 +190,13 @@ commit two
 "$denbox" sync --once
 [[ $(count "$FAKE/activations") == 2 && $(cat "$DENBOX_STATE/revision") != "$old" ]] || fail 'new commit not applied'
 [[ ! -e $DENBOX_STATE/snapshots/$old ]] || fail 'old snapshot kept'
+
+echo '# the home an earlier build left behind is removed before the next build'
+mkdir -p "$DENBOX_SHELTER/.config"
+echo left > "$repository/box/version"
+commit 'after a build that wrote to its home'
+"$denbox" sync --once
+[[ ! -e $DENBOX_SHELTER && $(count "$FAKE/activations") == 3 ]] || fail 'the build home stopped the sync'
 
 echo '# the evaluation and the build add the kit cache; DENBOX_BINARY_CACHE=0 leaves it out'
 cache_pattern=' --extra-substituters https://denbox\.cachix\.org --extra-trusted-public-keys denbox\.cachix\.org-1:[A-Za-z0-9+/]+=* '
